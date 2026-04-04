@@ -352,3 +352,32 @@ def get_sprout(user_id: int):
             return Sprout(score=score, message=message)
     finally:
         conn.close()
+
+@app.get("/users/{user_id}/friends")
+def get_friends(user_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Assuming friendships table stores bidirectional relationships with user_id_1 and user_id_2
+            cur.execute("""
+                SELECT 
+                    CASE 
+                        WHEN user_id_1 = %s THEN user_id_2
+                        ELSE user_id_1
+                    END AS friend_id
+                FROM friendships
+                WHERE (user_id_1 = %s OR user_id_2 = %s)
+                  AND status = 'accepted'
+            """, (user_id, user_id, user_id))
+            rows = cur.fetchall()
+            friend_ids = [row[0] for row in rows]
+            
+            # Optionally fetch friend names
+            if friend_ids:
+                cur.execute("SELECT user_id, user_name FROM users WHERE user_id = ANY(%s)", (friend_ids,))
+                friends = [{"user_id": row[0], "user_name": row[1]} for row in cur.fetchall()]
+            else:
+                friends = []
+            return {"user_id": user_id, "friends": friends}
+    finally:
+        conn.close()
