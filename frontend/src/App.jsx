@@ -3,6 +3,8 @@ import { useFetch } from './hooks/useFetch';
 import WeeklySummary from './components/WeeklySummary';
 import Sprout from './components/Sprout';
 import RecommendationList from './components/RecommendationList';
+import Leaderboard from './components/Leaderboard';
+import SocialBoard from './components/SocialBoard';
 
 const USER_ID = 1;
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
@@ -55,6 +57,12 @@ function App() {
     `${API_BASE}/users/${USER_ID}/friends`
   );
 
+
+  const { data: leaderboard, loading: lbLoading, error: lbError } = useFetch(
+    `${API_BASE}/users/${USER_ID}/leaderboard`
+  );
+
+
   const handleAcceptCarpool = (recId) => {
     setAcceptedCarpoolId(acceptedCarpoolId === recId ? null : recId);
   };
@@ -80,7 +88,7 @@ function App() {
           <div className="flex justify-center mb-2">
             <div className="w-32 h-6 bg-charcoal rounded-b-2xl border-t border-x border-gray-700"></div>
           </div>
-          
+
           {/* Status bar */}
           <div className="flex justify-between items-center px-6 py-3 text-cream text-xs font-medium">
             <span>{new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false })}</span>
@@ -104,7 +112,7 @@ function App() {
             </p>
           </div>
 
-        {/* Content area - scrollable */}
+          {/* Content area - scrollable */}
           <div className="flex-1 overflow-y-auto px-5 pt-5 pb-24 space-y-4">
             {activeNav === 'home' && (
               <>                {/* Date picker for Home tab */}
@@ -193,8 +201,52 @@ function App() {
                 onAccept={handleAcceptTransit}
               />
             )}
+            {activeNav === 'leaderboard' && (
+              <Leaderboard
+                data={leaderboard}
+                loading={lbLoading}
+                error={lbError}
+                onBack={() => setActiveNav('friends')}
+                onSocialBoard={() => setActiveNav('social')}
+              />
+            )}
+            {activeNav === 'social' && (
+              <SocialBoard
+                onBack={() => setActiveNav('leaderboard')}
+              />
+            )}
             {activeNav === 'friends' && (
               <div>
+                {/* Leaderboard button */}
+                <button
+                  onClick={() => setActiveNav('leaderboard')}
+                  style={{
+                    width: '100%',
+                    padding: '14px 18px',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(184,224,106,0.3)',
+                    background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
+                    color: '#F5F0E8',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    fontFamily: "'DM Sans', sans-serif",
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    marginBottom: '14px',
+                    boxShadow: '0 4px 14px rgba(45,74,62,0.2)',
+                    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                  }}
+                  onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                  onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <span style={{ fontSize: '18px' }}>🏆</span>
+                  <span>Leaderboard</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.6 }}>→</span>
+                </button>
                 {friendsLoading ? (
                   <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
                     Loading friends...
@@ -289,36 +341,32 @@ function App() {
           <div className="fixed bottom-0 left-0 right-0 max-w-sm mx-auto bg-white border-t border-gray-100 flex justify-around py-2 px-2 rounded-t-2xl z-50">
             <button
               onClick={() => setActiveNav('home')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${
-                activeNav === 'home' ? 'text-earth' : 'text-gray-400'
-              }`}
+              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'home' ? 'text-earth' : 'text-gray-400'
+                }`}
             >
               <span className="text-lg">🌿</span>
               <span className="truncate">Home</span>
             </button>
             <button
               onClick={() => setActiveNav('carpool')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${
-                activeNav === 'carpool' ? 'text-earth' : 'text-gray-400'
-              }`}
+              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'carpool' ? 'text-earth' : 'text-gray-400'
+                }`}
             >
               <span className="text-lg">🚗</span>
               <span className="truncate">Carpool</span>
             </button>
             <button
               onClick={() => setActiveNav('friends')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${
-                activeNav === 'friends' ? 'text-earth' : 'text-gray-400'
-              }`}
+              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'friends' ? 'text-earth' : 'text-gray-400'
+                }`}
             >
               <span className="text-lg">👥</span>
               <span className="truncate">Friends</span>
             </button>
             <button
               onClick={() => setActiveNav('transit')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${
-                activeNav === 'transit' ? 'text-earth' : 'text-gray-400'
-              }`}
+              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'transit' ? 'text-earth' : 'text-gray-400'
+                }`}
             >
               <span className="text-lg">🚌</span>
               <span className="truncate">Transit</span>

@@ -9,9 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 # ---------- Database Configuration ----------
-DB_HOST = "db.fdcwkvaivhrokkotmzwf.supabase.co"
+DB_HOST = "aws-1-us-east-2.pooler.supabase.com"
 DB_NAME = "postgres"
-DB_USER = "postgres"
+DB_USER = "postgres.fdcwkvaivhrokkotmzwf"
 DB_PASSWORD = "CS8803desover"
 DB_PORT = 5432
 
@@ -350,6 +350,80 @@ def get_sprout(user_id: int):
                 message = "Sprout needs water! Try carpooling or transit to help it grow."
 
             return Sprout(score=score, message=message)
+    finally:
+        conn.close()
+
+##########################################################
+## I just added leaderboard endpoint just for the sake of easier querying
+## Feel free to combine or delete it if you think this is not necessary
+############################################################
+@app.get("/users/{user_id}/leaderboard")
+def get_leaderboard(user_id: int):
+    """Return the user and their friends ranked by sustainability score."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get friend IDs
+            cur.execute("""
+                SELECT 
+                    CASE 
+                        WHEN user_id_1 = %s THEN user_id_2
+                        ELSE user_id_1
+                    END AS friend_id
+                FROM friendships
+                WHERE (user_id_1 = %s OR user_id_2 = %s)
+                  AND status = 'accepted'
+            """, (user_id, user_id, user_id))
+            friend_ids = [row[0] for row in cur.fetchall()]
+
+            # Include the current user in the ranking
+            all_ids = [user_id] + friend_ids
+            if not all_ids:
+                return {"user_id": user_id, "leaderboard": []}
+
+            # Get trip-mode counts for all users at once
+            cur.execute("""
+                SELECT user_id, trip_mode, COUNT(*) as cnt
+                FROM trips
+                WHERE user_id = ANY(%s)
+                GROUP BY user_id, trip_mode
+            """, (all_ids,))
+            mode_rows = cur.fetchall()
+
+            # Get user names
+            cur.execute("SELECT user_id, user_name FROM users WHERE user_id = ANY(%s)", (all_ids,))
+            name_map = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Calculate scores per user
+            user_modes = {}
+            for uid, mode, cnt in mode_rows:
+                if uid not in user_modes:
+                    user_modes[uid] = {"sov": 0, "carpool": 0, "transit": 0}
+                normalized = mode if mode in ("sov", "carpool", "transit") else "sov"
+                user_modes[uid][normalized] += cnt
+
+            results = []
+            for uid in all_ids:
+                modes = user_modes.get(uid, {"sov": 0, "carpool": 0, "transit": 0})
+                total = modes["sov"] + modes["carpool"] + modes["transit"]
+                if total == 0:
+                    score = 0
+                else:
+                    score = round((modes["carpool"] + modes["transit"]) / total * 100)
+                results.append({
+                    "user_id": uid,
+                    "user_name": name_map.get(uid, f"User {uid}"),
+                    "score": score,
+                    "total_trips": total,
+                    "carpool_trips": modes["carpool"],
+                    "transit_trips": modes["transit"],
+                    "sov_trips": modes["sov"],
+                })
+
+            # Sort by score descending, then by total_trips descending as tiebreak
+            results.sort(key=lambda x: (-x["score"], -x["total_trips"]))
+
+            return {"user_id": user_id, "leaderboard": results}
     finally:
         conn.close()
 
