@@ -205,6 +205,7 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
         "http://127.0.0.1:5176",
+        "https://desover-frontend.onrender.com",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
