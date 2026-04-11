@@ -1,7 +1,7 @@
 import React from 'react';
 import RecommendationCard from './RecommendationCard';
 
-export default function RecommendationList({ recommendations, type, acceptedId, onAccept }) {
+export default function RecommendationList({ recommendations, type, acceptedId, onAccept, onMessage }) {
   if (!recommendations || recommendations.length === 0) {
     return (
       <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 text-center">
@@ -38,7 +38,7 @@ export default function RecommendationList({ recommendations, type, acceptedId, 
         </div>
         <div className="space-y-4">
           {expandedRecommendations.map((rec) => (
-            <RecommendationCard key={rec.id} rec={rec} />
+            <RecommendationCard key={rec.id} rec={rec} onMessage={onMessage} />
           ))}
         </div>
       </div>
@@ -94,6 +94,7 @@ export default function RecommendationList({ recommendations, type, acceptedId, 
             rec={rec}
             isAccepted={acceptedId === rec.id}
             onAccept={() => onAccept(rec.id)}
+            onMessage={onMessage}
           />
         ))}
       </div>

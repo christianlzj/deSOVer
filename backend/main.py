@@ -9,8 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 # ---------- Database Configuration ----------
+# DB_HOST = "db.fdcwkvaivhrokkotmzwf.supabase.co" # IPv6 host
 DB_HOST = "aws-1-us-east-2.pooler.supabase.com"
 DB_NAME = "postgres"
+# DB_USER = "postgres" # IPv6 user
 DB_USER = "postgres.fdcwkvaivhrokkotmzwf"
 DB_PASSWORD = "CS8803desover"
 DB_PORT = 5432
@@ -61,6 +63,38 @@ class Recommendation(BaseModel):
 class Sprout(BaseModel):
     score: int
     message: str
+
+class User(BaseModel):
+    user_id: int
+    user_name: str
+
+class CreateUserRequest(BaseModel):
+    user_name: str
+    home_lat: float
+    home_lon: float
+    work_lat: float
+    work_lon: float
+
+class Message(BaseModel):
+    message_id: int
+    sender_id: int
+    sender_name: str
+    recipient_id: int
+    content: str
+    created_at: str
+    read: bool
+
+class SendMessageRequest(BaseModel):
+    recipient_id: int
+    content: str
+
+class Conversation(BaseModel):
+    friend_id: int
+    friend_name: str
+    last_message: str
+    last_message_time: str
+    unread_count: int
+    is_sender: bool
 
 # ---------- Helper Functions ----------
 def fetch_user_weekly_trips(user_id: int, week_start: date, week_end: date):
@@ -160,10 +194,59 @@ app = FastAPI(title="DeSOVer API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite default dev port
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.post("/users", response_model=User)
+def create_user(request: CreateUserRequest):
+    """Create a new user with auto-generated ID"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get next user_id
+            cur.execute("SELECT MAX(user_id) FROM users")
+            max_id = cur.fetchone()[0]
+            new_user_id = (max_id or 0) + 1
+            
+            # Insert new user
+            cur.execute("""
+                INSERT INTO users (user_id, user_name, home_lat, home_lon, work_lat, work_lon, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                RETURNING user_id, user_name
+            """, (new_user_id, request.user_name, request.home_lat, request.home_lon, request.work_lat, request.work_lon))
+            row = cur.fetchone()
+            conn.commit()
+            return {"user_id": row[0], "user_name": row[1]}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}", response_model=User)
+def get_user(user_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, user_name FROM users WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            if row:
+                return {"user_id": row[0], "user_name": row[1]}
+            else:
+                return {"user_id": user_id, "user_name": f"User {user_id}"}
+    finally:
+        conn.close()
 
 @app.get("/users/{user_id}/weekly-summary", response_model=WeeklySummary)
 def weekly_summary(user_id: int, week_start: Optional[date] = None, week_end: Optional[date] = None):
@@ -455,3 +538,138 @@ def get_friends(user_id: int):
             return {"user_id": user_id, "friends": friends}
     finally:
         conn.close()
+
+@app.get("/users/{user_id}/inbox")
+def get_inbox(user_id: int):
+    """Get list of conversations with unread counts and last message"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get all conversations (both sent and received messages)
+            cur.execute("""
+                SELECT DISTINCT 
+                    CASE 
+                        WHEN sender_id = %s THEN recipient_id
+                        ELSE sender_id
+                    END AS friend_id,
+                    u.user_name as friend_name
+                FROM messages
+                LEFT JOIN users u ON u.user_id = (
+                    CASE 
+                        WHEN sender_id = %s THEN recipient_id
+                        ELSE sender_id
+                    END
+                )
+                WHERE sender_id = %s OR recipient_id = %s
+                ORDER BY friend_id
+            """, (user_id, user_id, user_id, user_id))
+            
+            conversations = []
+            for row in cur.fetchall():
+                friend_id = row[0]
+                friend_name = row[1]
+                
+                # Get last message
+                cur.execute("""
+                    SELECT content, created_at, sender_id
+                    FROM messages
+                    WHERE (sender_id = %s AND recipient_id = %s) 
+                       OR (sender_id = %s AND recipient_id = %s)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (user_id, friend_id, friend_id, user_id))
+                last_msg = cur.fetchone()
+                
+                # Get unread count
+                cur.execute("""
+                    SELECT COUNT(*) FROM messages
+                    WHERE sender_id = %s AND recipient_id = %s AND read = FALSE
+                """, (friend_id, user_id))
+                unread = cur.fetchone()[0]
+                
+                conversations.append({
+                    "friend_id": friend_id,
+                    "friend_name": friend_name,
+                    "last_message": last_msg[0] if last_msg else "",
+                    "last_message_time": last_msg[1].isoformat() if last_msg else "",
+                    "unread_count": unread,
+                    "is_sender": last_msg[2] == user_id if last_msg else False
+                })
+            
+            return {"user_id": user_id, "conversations": conversations}
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}/messages/{friend_id}")
+def get_messages(user_id: int, friend_id: int):
+    """Get conversation thread with a friend"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get all messages between these two users
+            cur.execute("""
+                SELECT message_id, sender_id, recipient_id, content, created_at, read,
+                       u.user_name as sender_name
+                FROM messages
+                LEFT JOIN users u ON u.user_id = sender_id
+                WHERE (sender_id = %s AND recipient_id = %s)
+                   OR (sender_id = %s AND recipient_id = %s)
+                ORDER BY created_at ASC
+            """, (user_id, friend_id, friend_id, user_id))
+            
+            messages = []
+            for row in cur.fetchall():
+                messages.append({
+                    "message_id": row[0],
+                    "sender_id": row[1],
+                    "recipient_id": row[2],
+                    "content": row[3],
+                    "created_at": row[4].isoformat(),
+                    "read": row[5],
+                    "sender_name": row[6]
+                })
+            
+            # Mark messages from friend as read
+            if messages:
+                cur.execute("""
+                    UPDATE messages
+                    SET read = TRUE
+                    WHERE sender_id = %s AND recipient_id = %s AND read = FALSE
+                """, (friend_id, user_id))
+                conn.commit()
+            
+            return {"user_id": user_id, "friend_id": friend_id, "messages": messages}
+    finally:
+        conn.close()
+
+@app.post("/users/{user_id}/messages")
+def send_message(user_id: int, request: SendMessageRequest):
+    """Send a message to a friend"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO messages (sender_id, recipient_id, content, created_at, read)
+                VALUES (%s, %s, %s, NOW(), FALSE)
+                RETURNING message_id, created_at
+            """, (user_id, request.recipient_id, request.content))
+            result = cur.fetchone()
+            conn.commit()
+            
+            return {
+                "message_id": result[0],
+                "sender_id": user_id,
+                "recipient_id": request.recipient_id,
+                "content": request.content,
+                "created_at": result[1].isoformat(),
+                "read": False
+            }
+    except Exception as e:
+        conn.rollback()
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

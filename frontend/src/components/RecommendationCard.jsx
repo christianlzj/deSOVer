@@ -14,8 +14,23 @@ if (typeof window !== 'undefined' && !document.querySelector('style[data-pulse-a
   document.head.appendChild(style);
 }
 
-export default function RecommendationCard({ rec, isAccepted, onAccept }) {
+export default function RecommendationCard({ rec, isAccepted, onAccept, onMessage }) {
   const isCarpool = rec.type === 'carpool';
+
+  // Get the friend ID and name from the match
+  const getFriendId = () => {
+    if (rec.singleMatch) {
+      return rec.singleMatch.friend_id;
+    }
+    return null;
+  };
+
+  const getFriendName = () => {
+    if (rec.singleMatch) {
+      return rec.singleMatch.friend_name;
+    }
+    return null;
+  };
 
   // Single carpool match (expanded from RecommendationList)
   if (isCarpool && rec.singleMatch) {
@@ -156,6 +171,13 @@ export default function RecommendationCard({ rec, isAccepted, onAccept }) {
             {isAccepted ? '✓ Accepted' : 'Accept'}
           </button>
           <button
+            onClick={() => {
+              const friendId = getFriendId();
+              const friendName = getFriendName();
+              if (friendId && onMessage) {
+                onMessage(friendId, friendName);
+              }
+            }}
             style={{
               borderRadius: '12px',
               padding: '12px 10px',

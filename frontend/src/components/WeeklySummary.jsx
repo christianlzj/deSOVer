@@ -1,4 +1,5 @@
 import React from 'react';
+import Insights from './Insights';
 
 export default function WeeklySummary({ data }) {
   if (!data) return null;
@@ -93,68 +94,8 @@ export default function WeeklySummary({ data }) {
         </div>
       </div>
 
-      {/* CO2 Equivalents */}
-      <div style={{
-        background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
-        borderRadius: '20px',
-        padding: '13px 15px',
-        border: '1px solid rgba(184,224,106,0.15)'
-      }}>
-        <p style={{
-          fontSize: '10px',
-          fontWeight: '600',
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-          color: 'rgba(184,224,106,0.7)',
-          marginBottom: '9px'
-        }}>
-          {total_co2_lbs} lbs CO₂ is like…
-        </p>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <div style={{
-            flex: 1,
-            background: 'rgba(255,255,255,0.06)',
-            borderRadius: '12px',
-            padding: '9px 6px',
-            textAlign: 'center',
-            border: '1px solid rgba(255,255,255,0.05)'
-          }}>
-            <div style={{ fontSize: '16px' }}>🌳</div>
-            <div style={{ fontSize: '9.5px', color: 'rgba(245,240,232,0.7)', marginTop: '4px' }}>Seedlings</div>
-          </div>
-          <div style={{
-            flex: 1,
-            background: 'rgba(255,255,255,0.06)',
-            borderRadius: '12px',
-            padding: '9px 6px',
-            textAlign: 'center',
-            border: '1px solid rgba(255,255,255,0.05)'
-          }}>
-            <div style={{ fontSize: '16px' }}>🌲</div>
-            <div style={{ fontSize: '9.5px', color: 'rgba(245,240,232,0.7)', marginTop: '4px' }}>Trees</div>
-          </div>
-          <div style={{
-            flex: 1,
-            background: 'rgba(255,255,255,0.06)',
-            borderRadius: '12px',
-            padding: '9px 6px',
-            textAlign: 'center',
-            border: '1px solid rgba(255,255,255,0.05)'
-          }}>
-            <div style={{ fontSize: '16px' }}>⚡</div>
-            <div style={{ fontSize: '9.5px', color: 'rgba(245,240,232,0.7)', marginTop: '4px' }}>Energy</div>
-          </div>
-        </div>
-        <div style={{
-          marginTop: '9px',
-          fontSize: '9.5px',
-          color: 'rgba(245,240,232,0.3)',
-          textAlign: 'center',
-          letterSpacing: '0.03em'
-        }}>
-          = {(total_co2_lbs / 2.205).toFixed(1)} kg · {(total_co2_lbs / 2.205 / 1000).toFixed(4)} metric tons CO₂
-        </div>
-      </div>
+      {/* CO2 Insights - 3 Random Equivalences */}
+      <Insights co2Lbs={total_co2_lbs} />
 
       {/* Tip Section */}
       <div style={{

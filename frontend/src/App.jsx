@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useFetch } from './hooks/useFetch';
+import AuthScreen from './components/AuthScreen';
+import Greeting from './components/Greeting';
 import WeeklySummary from './components/WeeklySummary';
 import Sprout from './components/Sprout';
 import RecommendationList from './components/RecommendationList';
 import Leaderboard from './components/Leaderboard';
 import SocialBoard from './components/SocialBoard';
+import Messages from './components/Messages';
 
-const USER_ID = 1;
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 function getCurrentWeekDates() {
   const now = new Date();
@@ -28,11 +30,62 @@ function calculateEndDate(startDateStr) {
 }
 
 function App() {
+  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Restore user from localStorage on mount
+  useEffect(() => {
+    const savedUser = localStorage.getItem('desover_user');
+    if (savedUser) {
+      try {
+        setLoggedInUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error('Failed to restore user from localStorage:', e);
+      }
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Persist user to localStorage when it changes
+  useEffect(() => {
+    if (isHydrated) {
+      if (loggedInUser) {
+        localStorage.setItem('desover_user', JSON.stringify(loggedInUser));
+      } else {
+        localStorage.removeItem('desover_user');
+      }
+    }
+  }, [loggedInUser, isHydrated]);
+
+  if (!isHydrated) {
+    return <div>Loading...</div>;
+  }
+
+  // If not logged in, show auth screen
+  if (!loggedInUser) {
+    return (
+      <AuthScreen
+        onAuthSuccess={(user) => {
+          setLoggedInUser(user);
+        }}
+      />
+    );
+  }
+
+  // Once logged in, render the dashboard
+  return <Dashboard user={loggedInUser} onLogout={() => setLoggedInUser(null)} />;
+}
+
+function Dashboard({ user, onLogout }) {
   const [activeNav, setActiveNav] = useState('home');
   const [useCustomDates, setUseCustomDates] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('2025-01-01');
   const [acceptedCarpoolId, setAcceptedCarpoolId] = useState(null);
   const [acceptedTransitId, setAcceptedTransitId] = useState(null);
+  const [selectedFriendId, setSelectedFriendId] = useState(null);
+  const [selectedFriendName, setSelectedFriendName] = useState(null);
+
+  const USER_ID = user.user_id;
 
   let WEEK_START, WEEK_END;
   if (useCustomDates && customStartDate) {
@@ -57,6 +110,9 @@ function App() {
     `${API_BASE}/users/${USER_ID}/friends`
   );
 
+  const { data: userData, loading: userLoading, error: userError } = useFetch(
+    `${API_BASE}/users/${USER_ID}`
+  );
 
   const { data: leaderboard, loading: lbLoading, error: lbError } = useFetch(
     `${API_BASE}/users/${USER_ID}/leaderboard`
@@ -71,51 +127,173 @@ function App() {
     setAcceptedTransitId(acceptedTransitId === recId ? null : recId);
   };
 
+  const handleMessage = (friendId, friendName) => {
+    setSelectedFriendId(friendId);
+    setSelectedFriendName(friendName);
+    setActiveNav('messages');
+  };
+
   if (summaryLoading || recsLoading || sproutLoading) {
-    return <div className="flex items-center justify-center h-screen text-earth">Loading your mobility data...</div>;
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div style={{textAlign: 'center', maxWidth: '400px'}}>
+          <div style={{fontSize: '20px', marginBottom: '20px', color: '#2D4A3E'}}>
+            Loading your mobility data...
+          </div>
+          <div style={{fontSize: '12px', color: '#666', lineHeight: '1.8'}}>
+            <div>Summary: {summaryLoading ? '⏳ loading' : summaryError ? '❌ error' : '✓ done'}</div>
+            <div>Recommendations: {recsLoading ? '⏳ loading' : recsError ? '❌ error' : '✓ done'}</div>
+            <div>Sprout: {sproutLoading ? '⏳ loading' : sproutError ? '❌ error' : '✓ done'}</div>
+          </div>
+        </div>
+      </div>
+    );
   }
+  // Catch-all error check
   if (summaryError || recsError || sproutError) {
-    return <div className="flex items-center justify-center h-screen text-rust">Error loading data. Please try again later.</div>;
+    const allErrors = [];
+    if (summaryError) allErrors.push(`Summary: ${summaryError?.message || summaryError}`);
+    if (recsError) allErrors.push(`Recommendations: ${recsError?.message || recsError}`);
+    if (sproutError) allErrors.push(`Sprout: ${sproutError?.message || sproutError}`);
+    
+    console.error('Fetch errors:', allErrors);
   }
+  // Note: We proceed to render even with errors - errors are just logged
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+    <div style={{minHeight: '100vh', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'}}>
       {/* Phone container */}
-      <div className="w-full max-w-sm bg-charcoal rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
+      <div style={{width: '100%', maxWidth: '320px', background: '#1A2B24', borderRadius: '32px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', overflow: 'hidden', border: '1px solid rgba(107, 114, 128, 0.3)'}}>
         {/* Phone "bezel" */}
-        <div className="bg-charcoal px-3 pt-2 pb-0">
+        <div style={{background: '#1A2B24', paddingLeft: '12px', paddingRight: '12px', paddingTop: '8px', paddingBottom: '0'}}>
           {/* Notch */}
-          <div className="flex justify-center mb-2">
-            <div className="w-32 h-6 bg-charcoal rounded-b-2xl border-t border-x border-gray-700"></div>
+          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
+            <div style={{width: '128px', height: '24px', background: '#1A2B24', borderRadius: '0 0 16px 16px', borderTop: '1px solid rgba(107, 114, 128, 0.4)', borderLeft: '1px solid rgba(107, 114, 128, 0.4)', borderRight: '1px solid rgba(107, 114, 128, 0.4)'}}></div>
           </div>
 
           {/* Status bar */}
-          <div className="flex justify-between items-center px-6 py-3 text-cream text-xs font-medium">
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px', paddingTop: '12px', paddingBottom: '12px', color: '#F5F0E8', fontSize: '12px', fontWeight: '500'}}>
             <span>{new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false })}</span>
             <span>●●●●●</span>
           </div>
         </div>
 
         {/* Screen content */}
-        <div className="bg-cream flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="bg-earth text-cream pt-4 pb-8 px-6 rounded-b-3xl relative overflow-hidden flex-shrink-0">
-            <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-lime opacity-10"></div>
-            <p className="text-xs font-semibold tracking-widest text-lime opacity-80 mb-2 relative z-10">
-              Week of {WEEK_START} – {WEEK_END}
-            </p>
-            <h1 className="font-serif text-2xl leading-tight mb-1 relative z-10">
-              Your Mobility<br />This Week
-            </h1>
-            <p className="text-xs text-cream opacity-60 relative z-10">
-              {WEEK_START} – {WEEK_END} · Atlanta, GA
-            </p>
+        <div style={{background: '#F5F0E8', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
+          {/* Header - Dynamic based on tab */}
+          <div style={{background: '#2D4A3E', color: '#F5F0E8', paddingTop: '16px', paddingBottom: '32px', paddingLeft: '24px', paddingRight: '24px', borderRadius: '0 0 24px 24px', position: 'relative', overflow: 'hidden', flexShrink: 0}}>
+            <div style={{position: 'absolute', top: '-40px', right: '-40px', width: '128px', height: '128px', borderRadius: '50%', background: '#B8E06A', opacity: 0.1}}></div>
+            
+            {activeNav === 'home' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Week of {WEEK_START} – {WEEK_END}
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Your Mobility<br />This Week
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {WEEK_START} – {WEEK_END} · Atlanta, GA
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'carpool' && (
+              <>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: 'rgba(184,224,106,0.18)',
+                  border: '1px solid rgba(184,224,106,0.3)',
+                  borderRadius: '20px',
+                  padding: '4px 10px',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: '#B8E06A',
+                  marginBottom: '8px',
+                  fontFamily: "'DM Sans', sans-serif",
+                  position: 'relative',
+                  zIndex: 10
+                }}>
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    background: '#B8E06A',
+                    animation: 'pulse 1.5s ease-in-out infinite'
+                  }}></span>
+                  Potential Overlaps Detected
+                </div>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Carpool<br />Matches
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {recommendations?.recommendations?.filter(r => r.type === 'carpool').length || 0} available routes
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'transit' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Smart Suggestions
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Transit<br />Options
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {recommendations?.recommendations?.filter(r => r.type === 'transit').length || 0} routes available
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'friends' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Your Community
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Friends &<br />Leaderboard
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {friends?.friends?.length || 0} friends connected
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'messages' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Stay Connected
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Messages
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  Chat with your friends
+                </p>
+              </>
+            )}
           </div>
+          
+          <style>{`
+            @keyframes pulse {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.5; transform: scale(0.8); }
+            }
+          `}</style>
 
           {/* Content area - scrollable */}
-          <div className="flex-1 overflow-y-auto px-5 pt-5 pb-24 space-y-4">
+          <div style={{flex: 1, overflowY: 'auto', paddingLeft: '20px', paddingRight: '20px', paddingTop: '20px', paddingBottom: '96px', display: 'flex', flexDirection: 'column', gap: '16px'}}>
             {activeNav === 'home' && (
-              <>                {/* Date picker for Home tab */}
+              <>
+                {/* Greeting message */}
+                <Greeting userName={userData?.user_name} />
+
+                {/* Date picker for Home tab */}
                 <div style={{
                   background: '#F5F0E8',
                   borderRadius: '14px',
@@ -191,6 +369,7 @@ function App() {
                 type="carpool"
                 acceptedId={acceptedCarpoolId}
                 onAccept={handleAcceptCarpool}
+                onMessage={handleMessage}
               />
             )}
             {activeNav === 'transit' && (
@@ -199,6 +378,7 @@ function App() {
                 type="transit"
                 acceptedId={acceptedTransitId}
                 onAccept={handleAcceptTransit}
+                onMessage={handleMessage}
               />
             )}
             {activeNav === 'leaderboard' && (
@@ -214,6 +394,9 @@ function App() {
               <SocialBoard
                 onBack={() => setActiveNav('leaderboard')}
               />
+            )}
+            {activeNav === 'messages' && (
+              <Messages userId={USER_ID} selectedFriendId={selectedFriendId} />
             )}
             {activeNav === 'friends' && (
               <div>
@@ -338,38 +521,49 @@ function App() {
           </div>
 
           {/* Navigation bar */}
-          <div className="fixed bottom-0 left-0 right-0 max-w-sm mx-auto bg-white border-t border-gray-100 flex justify-around py-2 px-2 rounded-t-2xl z-50">
+          <div style={{position: 'fixed', bottom: 0, left: 0, right: 0, maxWidth: '320px', marginLeft: 'auto', marginRight: 'auto', background: 'white', borderTop: '1px solid rgba(229, 231, 235, 1)', display: 'flex', justifyContent: 'space-around', paddingTop: '8px', paddingBottom: '8px', paddingLeft: '8px', paddingRight: '8px', borderRadius: '8px 8px 0 0', zIndex: 50}}>
             <button
               onClick={() => setActiveNav('home')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'home' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'home' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🌿</span>
-              <span className="truncate">Home</span>
+              <span style={{fontSize: '18px'}}>🌿</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Home</span>
             </button>
             <button
               onClick={() => setActiveNav('carpool')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'carpool' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'carpool' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🚗</span>
-              <span className="truncate">Carpool</span>
+              <span style={{fontSize: '18px'}}>🚗</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Carpool</span>
             </button>
             <button
               onClick={() => setActiveNav('friends')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'friends' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'friends' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">👥</span>
-              <span className="truncate">Friends</span>
+              <span style={{fontSize: '18px'}}>👥</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Friends</span>
             </button>
             <button
               onClick={() => setActiveNav('transit')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'transit' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'transit' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🚌</span>
-              <span className="truncate">Transit</span>
+              <span style={{fontSize: '18px'}}>🚌</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Transit</span>
+            </button>
+            <button
+              onClick={() => setActiveNav('messages')}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'messages' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
+            >
+              <span style={{fontSize: '18px'}}>💬</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Messages</span>
+            </button>
+            <button
+              onClick={onLogout}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: '#9ca3af', transition: 'color 0.15s'}}
+              title="Logout"
+            >
+              <span style={{fontSize: '18px'}}>🚪</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Logout</span>
             </button>
           </div>
         </div>
