@@ -3,16 +3,18 @@ import { useFetch } from '../hooks/useFetch';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
-export default function Messages({ userId, selectedFriendId: propSelectedFriendId }) {
+export default function Messages({ userId, selectedFriendId: propSelectedFriendId, selectedFriendName: propSelectedFriendName }) {
   const [view, setView] = useState('inbox'); // inbox | chat
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [localMessages, setLocalMessages] = useState(null);
 
   // When a friend is selected from a recommendation card, auto-switch to chat view
   useEffect(() => {
     if (propSelectedFriendId) {
       setSelectedFriendId(propSelectedFriendId);
+      setLocalMessages(null);
       setView('chat');
     }
   }, [propSelectedFriendId]);
@@ -27,9 +29,22 @@ export default function Messages({ userId, selectedFriendId: propSelectedFriendI
     selectedFriendId ? `${API_BASE}/users/${userId}/messages/${selectedFriendId}` : null
   );
 
+  // Sync local messages from fetched data; reset when switching friends
+  useEffect(() => {
+    setLocalMessages(null);
+  }, [selectedFriendId]);
+
+  useEffect(() => {
+    if (messagesData?.messages) {
+      setLocalMessages(messagesData.messages);
+    }
+  }, [messagesData]);
+
   const handleSendMessage = async () => {
     if (!messageInput.trim() || !selectedFriendId) return;
 
+    const content = messageInput.trim();
+    setMessageInput('');
     setSending(true);
     try {
       const response = await fetch(`${API_BASE}/users/${userId}/messages`, {
@@ -37,16 +52,21 @@ export default function Messages({ userId, selectedFriendId: propSelectedFriendI
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recipient_id: selectedFriendId,
-          content: messageInput.trim(),
+          content,
         }),
       });
 
       if (response.ok) {
-        setMessageInput('');
-        // Refresh messages
-        setTimeout(() => {
-          window.location.reload(); // Simple refresh - in production use better state management
-        }, 500);
+        const result = await response.json();
+        setLocalMessages(prev => [...(prev || []), {
+          message_id: result.message_id,
+          sender_id: userId,
+          recipient_id: selectedFriendId,
+          content: content,
+          created_at: result.created_at,
+          read: false,
+          sender_name: '',
+        }]);
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -151,6 +171,8 @@ export default function Messages({ userId, selectedFriendId: propSelectedFriendI
 
   // Chat view
   const selectedFriend = inboxData?.conversations?.find((c) => c.friend_id === selectedFriendId);
+  const displayName = selectedFriend?.friend_name || propSelectedFriendName || 'Chat';
+  const displayMessages = localMessages ?? messagesData?.messages;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -170,7 +192,7 @@ export default function Messages({ userId, selectedFriendId: propSelectedFriendI
           ← Back
         </button>
         <h2 style={{ fontSize: '16px', fontWeight: '600', color: '#2D4A3E', margin: 0 }}>
-          {selectedFriend?.friend_name || 'Chat'}
+          {displayName}
         </h2>
         <div style={{ width: '60px' }} />
       </div>
@@ -188,10 +210,10 @@ export default function Messages({ userId, selectedFriendId: propSelectedFriendI
       >
         {messagesLoading ? (
           <div style={{ textAlign: 'center', color: '#666' }}>Loading...</div>
-        ) : !messagesData?.messages || messagesData.messages.length === 0 ? (
+        ) : !displayMessages || displayMessages.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999' }}>No messages yet</div>
         ) : (
-          messagesData.messages.map((msg) => (
+          displayMessages.map((msg) => (
             <div
               key={msg.message_id}
               style={{

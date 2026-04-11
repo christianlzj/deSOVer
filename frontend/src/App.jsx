@@ -396,7 +396,7 @@ function Dashboard({ user, onLogout }) {
               />
             )}
             {activeNav === 'messages' && (
-              <Messages userId={USER_ID} selectedFriendId={selectedFriendId} />
+              <Messages userId={USER_ID} selectedFriendId={selectedFriendId} selectedFriendName={selectedFriendName} />
             )}
             {activeNav === 'friends' && (
               <div>

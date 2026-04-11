@@ -1,3 +1,5 @@
+import os
+
 import psycopg2
 from fastapi import FastAPI
 from datetime import datetime, timedelta, date
@@ -10,12 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # ---------- Database Configuration ----------
 # DB_HOST = "db.fdcwkvaivhrokkotmzwf.supabase.co" # IPv6 host
-DB_HOST = "aws-1-us-east-2.pooler.supabase.com"
-DB_NAME = "postgres"
+DB_HOST = os.environ.get("DB_HOST", "aws-1-us-east-2.pooler.supabase.com")
+DB_NAME = os.environ.get("DB_NAME", "postgres")
 # DB_USER = "postgres" # IPv6 user
-DB_USER = "postgres.fdcwkvaivhrokkotmzwf"
-DB_PASSWORD = "CS8803desover"
-DB_PORT = 5432
+DB_USER = os.environ.get("DB_USER", "postgres.fdcwkvaivhrokkotmzwf")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "CS8803desover")
+DB_PORT = os.environ.get("DB_PORT", 5432)
 
 def get_db_connection():
     return psycopg2.connect(
