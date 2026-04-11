@@ -33,9 +33,9 @@ def get_recurring_trips(trips, min_occurrences=2):
         trips
         .groupby(['start_cluster', 'end_cluster'])
         .size()
-        .reset_index(name='count')
+        .reset_index(name='occurrences')
     )
 
-    recurring_od = od_counts[od_counts['count'] >= min_occurrences][['start_cluster', 'end_cluster']]
+    recurring_od = od_counts[od_counts['occurrences'] >= min_occurrences][['start_cluster', 'end_cluster', 'occurrences']]
 
     return trips.merge(recurring_od, on=['start_cluster', 'end_cluster'], how='inner')

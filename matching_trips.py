@@ -3,8 +3,8 @@ from geopy.distance import distance
 from shapely.geometry import LineString, Point
 from pyproj import Transformer
 
-from .recurring_trips import get_recurring_trips
-from .friendships import parse_friendships
+from recurring_trips import get_recurring_trips
+from friendships import parse_friendships
 
 def geodesic(a, b):
     dist_miles = distance(a, b).miles
@@ -63,6 +63,21 @@ def get_end_time_score(my_trip, other_trip, max_time_diff):
     time_score = 1 - min(time_diff / max_time_diff, 1)
     return time_score
 
+def get_co2_saved(my_trip, other_trip, scenario):
+    my_start = (my_trip['start_lat'], my_trip['start_lon'])
+    my_end = (my_trip['end_lat'], my_trip['end_lon'])
+    other_start = (other_trip['start_lat'], other_trip['start_lon'])
+    other_end = (other_trip['end_lat'], other_trip['end_lon'])
+
+    my_distance = my_trip['distance_miles']
+    other_distance = other_trip['distance_miles']
+
+    carpool_distance = geodesic(my_start, other_start) + geodesic(other_start, other_end) + geodesic(other_end, my_end)
+    saved_distance = my_distance + other_distance - carpool_distance
+    
+    CO2_PER_MILE = 0.4
+    co2_saved = saved_distance * CO2_PER_MILE
+    return round(co2_saved, 6)
 
 def score_trips_for_user(user_id, trips, friendships, max_distance, max_time_diff, test=False, verbose=False):
     my_trips = trips[trips['user_id'] == user_id]
@@ -107,23 +122,40 @@ def score_trips_for_user(user_id, trips, friendships, max_distance, max_time_dif
 
             # can pickup and dropoff at end, or pickup enroute and dropoff at end, or pickup at beginning and dropoff enroute, or pickup and dropoff enroute
             # time alignment should match with pickup/dropoff alignment - if pickup is enroute, then start time should be less important, if dropoff is enroute, then end time should be less important
-            route_score = max(pickup_begin_score + dropoff_end_score + 0.5*start_time_score + 0.5*end_time_score,
-                              pickup_enroute_score + dropoff_end_score + 0.25*start_time_score + 0.75*end_time_score,
-                              pickup_begin_score + dropoff_enroute_score + 0.75*start_time_score + 0.25*end_time_score,
-                              pickup_enroute_score + dropoff_enroute_score + 0.5*start_time_score + 0.5*end_time_score)
 
-            
+            scenarios = {
+                "A (begin→end)": pickup_begin_score + dropoff_end_score + 0.5*start_time_score + 0.5*end_time_score,
+                "B (enroute→end)": pickup_enroute_score + dropoff_end_score + 0.25*start_time_score + 0.75*end_time_score,
+                "C (begin→enroute)": pickup_begin_score + dropoff_enroute_score + 0.75*start_time_score + 0.25*end_time_score,
+                "D (enroute→enroute)": pickup_enroute_score + dropoff_enroute_score + 0.5*start_time_score + 0.5*end_time_score
+            }
+
+            best_scenario = max(scenarios, key=scenarios.get)
+            route_score = scenarios[best_scenario]
+
             total_score = route_score / 3
             scores.append({
                 'user_id': user_id,
-                'other_user': other_trip['user_id'],
-                'my_trip': my_trip['trip_id'],
-                'other_trip': other_trip['trip_id'],
-                'score': round(total_score, 6)
+                'friend_user_id': other_trip['user_id'],
+                'routine_id': my_trip['trip_id'],
+                'friend_routine_id': other_trip['trip_id'],
+                'match_score': round(total_score, 6),
+                'co2_saved_kg': get_co2_saved(my_trip, other_trip, best_scenario),
+                'mode': 'carpool',
+                'details': {
+                    'scenario': best_scenario,
+                    'pickup_begin_score': round(pickup_begin_score, 6),
+                    'dropoff_end_score': round(dropoff_end_score, 6),
+                    'pickup_enroute_score': round(pickup_enroute_score, 6),
+                    'dropoff_enroute_score': round(dropoff_enroute_score, 6),
+                    'start_time_score': round(start_time_score, 6),
+                    'end_time_score': round(end_time_score, 6),
+                    'friendship_depth': 1
+                }
             })
 
         if test:
             break
     
-    scores.sort(key=lambda x: x['score'], reverse=True)
+    scores.sort(key=lambda x: x['match_score'], reverse=True)
     return scores

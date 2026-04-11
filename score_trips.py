@@ -1,6 +1,6 @@
 import pandas as pd
 import ast
-from utils.matching_trips import score_trips_for_user
+from matching_trips import score_trips_for_user
 
 MAX_DISTANCE = 2 # miles
 MAX_TIME_DIFF = 30 # minutes
@@ -41,7 +41,7 @@ def score_all_trips(trips, friendships):
         print(f"Scoring trips for user {user_id}...")
         scores_dict[user_id] = score_trips_for_user(user_id, trips, friendships, max_distance=MAX_DISTANCE, max_time_diff=MAX_TIME_DIFF)
 
-    all_matches = [s for scores in scores_dict.values() for s in scores if s['score'] > 0]
+    all_matches = [s for scores in scores_dict.values() for s in scores if s['match_score'] > 0]
     scores_df = pd.DataFrame(all_matches)
     return scores_df
 
@@ -49,5 +49,7 @@ if __name__ == "__main__":
     trips, users, friendships = load_data()
     trips = preprocess_trips(trips)
     scores = score_all_trips(trips, friendships)
+    scores = scores.reset_index(drop=True)
+    scores['recommendation_id'] = scores.index
     print(f"Found {len(scores)} matches between recurring trips of friends")
-    print(scores.sort_values('score', ascending=False).head())
+    print(scores.sort_values('match_score', ascending=False).head())
