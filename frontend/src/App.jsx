@@ -80,8 +80,8 @@ function Dashboard({ user, onLogout }) {
   const [activeNav, setActiveNav] = useState('home');
   const [useCustomDates, setUseCustomDates] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('2025-01-01');
-  const [acceptedCarpoolId, setAcceptedCarpoolId] = useState(null);
-  const [acceptedTransitId, setAcceptedTransitId] = useState(null);
+  const [acceptedCarpoolIds, setAcceptedCarpoolIds] = useState({});
+  const [acceptedTransitIds, setAcceptedTransitIds] = useState({});
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [selectedFriendName, setSelectedFriendName] = useState(null);
 
@@ -119,12 +119,26 @@ function Dashboard({ user, onLogout }) {
   );
 
 
-  const handleAcceptCarpool = (recId) => {
-    setAcceptedCarpoolId(acceptedCarpoolId === recId ? null : recId);
+  const handleAcceptCarpool = (groupId, friendId) => {
+    setAcceptedCarpoolIds(prev => {
+      if (prev[groupId] === friendId) {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      }
+      return { ...prev, [groupId]: friendId };
+    });
   };
 
-  const handleAcceptTransit = (recId) => {
-    setAcceptedTransitId(acceptedTransitId === recId ? null : recId);
+  const handleAcceptTransit = (groupKey, recId) => {
+    setAcceptedTransitIds(prev => {
+      if (prev[groupKey] === recId) {
+        const next = { ...prev };
+        delete next[groupKey];
+        return next;
+      }
+      return { ...prev, [groupKey]: recId };
+    });
   };
 
   const handleMessage = (friendId, friendName) => {
@@ -367,7 +381,7 @@ function Dashboard({ user, onLogout }) {
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="carpool"
-                acceptedId={acceptedCarpoolId}
+                acceptedIds={acceptedCarpoolIds}
                 onAccept={handleAcceptCarpool}
                 onMessage={handleMessage}
               />
@@ -376,7 +390,7 @@ function Dashboard({ user, onLogout }) {
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="transit"
-                acceptedId={acceptedTransitId}
+                acceptedIds={acceptedTransitIds}
                 onAccept={handleAcceptTransit}
                 onMessage={handleMessage}
               />

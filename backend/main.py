@@ -149,21 +149,28 @@ def fetch_routine_info(routine_id: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT origin_lat, origin_lon, destination_lat, destination_lon,
-                       days_of_week, time_window_start
-                FROM routines
-                WHERE routine_id = %s
+                SELECT t.start_lat, t.start_lon, t.end_lat, t.end_lon,
+                       t.start_time
+                FROM routines r
+                JOIN trips t ON r.routine_id = t.trip_id
+                WHERE r.routine_id = %s
             """, (routine_id,))
             row = cur.fetchone()
             if not row:
                 return None
+            start_lat, start_lon, end_lat, end_lon, start_time = row
+
+            # Assume recurring trips occur on weekdays (adjustable)
+            days_of_week_str = "MON,TUE,WED,THU,FRI"
+            time_window_start = start_time.time()
+
             return {
-                'origin_lat': float(row[0]),
-                'origin_lon': float(row[1]),
-                'destination_lat': float(row[2]),
-                'destination_lon': float(row[3]),
-                'days_of_week': row[4],
-                'time_window_start': row[5]
+                'origin_lat': float(start_lat),
+                'origin_lon': float(start_lon),
+                'destination_lat': float(end_lat),
+                'destination_lon': float(end_lon),
+                'days_of_week': days_of_week_str,
+                'time_window_start': time_window_start
             }
     finally:
         conn.close()
@@ -294,30 +301,36 @@ def weekly_summary(user_id: int, week_start: Optional[date] = None, week_end: Op
 def get_recommendations(user_id: int, limit: int = 10):
     recs = fetch_user_recommendations(user_id, limit)
 
-    carpool_groups = {}
+    # Use route geometry as key for grouping carpool matches
+    carpool_groups = {}  # key: (origin_lat, origin_lon, dest_lat, dest_lon) -> dict
     transit_items = []
 
     for r in recs:
         if r['mode'] == 'carpool':
-            key = r['routine_id']
-            if key not in carpool_groups:
-                # Convert details if it's a string, else use directly
-                details = r['details']
-                if isinstance(details, str):
-                    details = json.loads(details) if details else {}
-                else:
-                    details = details or {}
-                carpool_groups[key] = {
+            # Fetch routine info to get the route geometry
+            routine_info = fetch_routine_info(r['routine_id'])
+            if not routine_info:
+                continue
+            route_key = (
+                routine_info['origin_lat'], routine_info['origin_lon'],
+                routine_info['destination_lat'], routine_info['destination_lon']
+            )
+            if route_key not in carpool_groups:
+                carpool_groups[route_key] = {
                     'recommendation_id': r['recommendation_id'],
                     'co2_saved_kg': r['co2_saved_kg'],
-                    'matches': [],
-                    'details': details
+                    'routine_info': routine_info,
+                    'matches': {}  # friend_id -> {friend_name, score}
                 }
-            carpool_groups[key]['matches'].append({
-                'friend_name': r['friend_name'],
-                'friend_id': r['friend_user_id'],
-                'score': r['match_score']
-            })
+            # Keep the best score for each friend in this route
+            friend_id = r['friend_user_id']
+            if friend_id not in carpool_groups[route_key]['matches'] or \
+               r['match_score'] > carpool_groups[route_key]['matches'][friend_id]['score']:
+                carpool_groups[route_key]['matches'][friend_id] = {
+                    'friend_name': r['friend_name'],
+                    'friend_id': friend_id,
+                    'score': r['match_score']
+                }
         else:  # transit
             details = r['details']
             if isinstance(details, str):
@@ -333,11 +346,9 @@ def get_recommendations(user_id: int, limit: int = 10):
 
     final_recommendations = []
 
-    # Process carpool groups
-    for routine_id, group in carpool_groups.items():
-        routine_info = fetch_routine_info(routine_id)
-        if not routine_info:
-            continue
+    # Build carpool cards
+    for group in carpool_groups.values():
+        routine_info = group['routine_info']
         days_of_week = get_days_of_week(routine_info['days_of_week'])
         suggested_departure = get_departure_time_from_routine(routine_info['time_window_start'])
         co2_saved_lbs = (group['co2_saved_kg'] or 0) * 2.205
@@ -354,7 +365,7 @@ def get_recommendations(user_id: int, limit: int = 10):
                 friend_id=m['friend_id'],
                 days=days_of_week,
                 score=m['score']
-            ) for m in group['matches']
+            ) for m in group['matches'].values()
         ]
 
         final_recommendations.append({
@@ -368,7 +379,7 @@ def get_recommendations(user_id: int, limit: int = 10):
             'matches': matches
         })
 
-    # Process transit items
+    # Process transit items (unchanged, but ensure fetch_routine_info is used correctly)
     for item in transit_items:
         routine_info = fetch_routine_info(item['routine_id'])
         if not routine_info:
@@ -386,7 +397,7 @@ def get_recommendations(user_id: int, limit: int = 10):
             'id': item['recommendation_id'],
             'route': route,
             'suggested_departure': details.get('departure_time', ''),
-            'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # could be refined
+            'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
             'co2_saved_lbs': round(co2_saved_lbs, 1),
             'transit_details': {
                 'route_short_name': details.get('route_short_name', ''),
@@ -403,7 +414,6 @@ def get_recommendations(user_id: int, limit: int = 10):
         })
 
     return {"recommendations": final_recommendations}
-
 @app.get("/users/{user_id}/sprout", response_model=Sprout)
 def get_sprout(user_id: int):
     conn = get_db_connection()
