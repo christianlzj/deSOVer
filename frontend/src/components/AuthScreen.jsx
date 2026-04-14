@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 
 export default function AuthScreen({ onAuthSuccess }) {
-  const [mode, setMode] = useState('landing'); // landing | login | signup
+  const [mode, setMode] = useState('landing'); // landing | login | signup | signupSuccess
   const [loginId, setLoginId] = useState('');
   const [loginName, setLoginName] = useState('');
   const [signupName, setSignupName] = useState('');
+  const [newUserId, setNewUserId] = useState(null);
   const [homeLat, setHomeLat] = useState('');
   const [homeLon, setHomeLon] = useState('');
   const [workLat, setWorkLat] = useState('');
@@ -62,11 +63,12 @@ export default function AuthScreen({ onAuthSuccess }) {
       });
 
       if (!response.ok) throw new Error('Signup failed');
-      
+
       const newUser = await response.json();
-      
-      // Auto login after signup
-      onAuthSuccess({ user_id: newUser.user_id, user_name: newUser.user_name });
+
+      // Show the assigned ID before entering the app
+      setNewUserId(newUser.user_id);
+      setMode('signupSuccess');
     } catch (err) {
       setError(err.message || 'Signup failed');
     } finally {
@@ -278,6 +280,60 @@ export default function AuthScreen({ onAuthSuccess }) {
               ← Back
             </button>
           </form>
+        </div>
+      )}
+
+      {/* Signup Success Screen */}
+      {mode === 'signupSuccess' && (
+        <div className="w-full max-w-md fade-in" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '64px', marginBottom: '16px' }}>🎉</div>
+          <h2 style={{
+            fontFamily: "'DM Serif Display', serif",
+            fontSize: '28px',
+            color: '#2D4A3E',
+            marginBottom: '8px'
+          }}>Account Created!</h2>
+          <p style={{ fontSize: '14px', color: '#4A7C59', marginBottom: '32px' }}>
+            Save your User ID — you'll need it to log in.
+          </p>
+
+          <div style={{
+            background: '#F2F6F3',
+            borderRadius: '16px',
+            padding: '24px',
+            marginBottom: '32px'
+          }}>
+            <p style={{ fontSize: '12px', fontWeight: '600', color: '#8A9A8E', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>
+              Your User ID
+            </p>
+            <p style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: '48px',
+              color: '#2D4A3E',
+              fontWeight: 'bold',
+              lineHeight: 1
+            }}>
+              {newUserId}
+            </p>
+          </div>
+
+          <button
+            onClick={() => onAuthSuccess({ user_id: newUserId, user_name: signupName.trim() })}
+            style={{
+              width: '100%',
+              padding: '14px',
+              borderRadius: '12px',
+              border: 'none',
+              background: '#2D4A3E',
+              color: '#B8E06A',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              fontFamily: "'DM Sans', sans-serif"
+            }}
+          >
+            Continue to App →
+          </button>
         </div>
       )}
 
