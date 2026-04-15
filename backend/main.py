@@ -50,6 +50,8 @@ class Match(BaseModel):
     friend_id: int
     days: List[str]
     score: float
+    recommendation_id: int
+    status: str
 
 class Recommendation(BaseModel):
     type: str
@@ -61,6 +63,10 @@ class Recommendation(BaseModel):
     fuel_saved_dollars: Optional[float] = None
     matches: Optional[List[Match]] = None
     transit_details: Optional[Dict[str, Any]] = None
+    status: Optional[str] = 'suggested'
+
+class UpdateStatusRequest(BaseModel):
+    status: str
 
 class Sprout(BaseModel):
     score: int
@@ -121,7 +127,7 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
             cur.execute("""
                 SELECT r.recommendation_id, r.mode, r.friend_user_id, r.friend_routine_id,
                        r.routine_id, r.match_score, r.co2_saved_kg, r.details,
-                       u.user_name as friend_name
+                       u.user_name as friend_name, r.status
                 FROM recommendations r
                 LEFT JOIN users u ON r.friend_user_id = u.user_id
                 WHERE r.user_id = %s
@@ -130,7 +136,7 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
             """, (user_id, limit))
             rows = cur.fetchall()
             columns = ['recommendation_id', 'mode', 'friend_user_id', 'friend_routine_id',
-                       'routine_id', 'match_score', 'co2_saved_kg', 'details', 'friend_name']
+                       'routine_id', 'match_score', 'co2_saved_kg', 'details', 'friend_name', 'status']
             # Convert Decimal to float for co2_saved_kg and match_score
             result = []
             for row in rows:
@@ -329,7 +335,9 @@ def get_recommendations(user_id: int, limit: int = 10):
                 carpool_groups[route_key]['matches'][friend_id] = {
                     'friend_name': r['friend_name'],
                     'friend_id': friend_id,
-                    'score': r['match_score']
+                    'score': r['match_score'],
+                    'recommendation_id': r['recommendation_id'],
+                    'status': r.get('status', 'suggested')
                 }
         else:  # transit
             details = r['details']
@@ -341,7 +349,8 @@ def get_recommendations(user_id: int, limit: int = 10):
                 'recommendation_id': r['recommendation_id'],
                 'routine_id': r['routine_id'],
                 'co2_saved_kg': r['co2_saved_kg'],
-                'details': details
+                'details': details,
+                'status': r.get('status', 'suggested')
             })
 
     final_recommendations = []
@@ -364,7 +373,9 @@ def get_recommendations(user_id: int, limit: int = 10):
                 friend_name=m['friend_name'],
                 friend_id=m['friend_id'],
                 days=days_of_week,
-                score=m['score']
+                score=m['score'],
+                recommendation_id=m['recommendation_id'],
+                status=m['status']
             ) for m in group['matches'].values()
         ]
 
@@ -399,6 +410,7 @@ def get_recommendations(user_id: int, limit: int = 10):
             'suggested_departure': details.get('departure_time', ''),
             'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
             'co2_saved_lbs': round(co2_saved_lbs, 1),
+            'status': item['status'],
             'transit_details': {
                 'route_short_name': details.get('route_short_name', ''),
                 'route_long_name': details.get('route_long_name', ''),
@@ -414,6 +426,27 @@ def get_recommendations(user_id: int, limit: int = 10):
         })
 
     return {"recommendations": final_recommendations}
+
+@app.patch("/recommendations/{rec_id}/status")
+def update_recommendation_status(rec_id: int, body: UpdateStatusRequest):
+    if body.status not in ('suggested', 'accepted'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="status must be 'suggested' or 'accepted'")
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE recommendations SET status = %s WHERE recommendation_id = %s",
+                (body.status, rec_id)
+            )
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 @app.get("/users/{user_id}/sprout", response_model=Sprout)
 def get_sprout(user_id: int):
     conn = get_db_connection()

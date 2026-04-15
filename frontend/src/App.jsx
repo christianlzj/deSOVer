@@ -80,8 +80,8 @@ function Dashboard({ user, onLogout }) {
   const [activeNav, setActiveNav] = useState('home');
   const [useCustomDates, setUseCustomDates] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('2025-01-01');
-  const [acceptedCarpoolIds, setAcceptedCarpoolIds] = useState({});
-  const [acceptedTransitIds, setAcceptedTransitIds] = useState({});
+  const [recsVersion, setRecsVersion] = useState(0);
+  const [processingId, setProcessingId] = useState(null);
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [selectedFriendName, setSelectedFriendName] = useState(null);
 
@@ -101,7 +101,7 @@ function Dashboard({ user, onLogout }) {
     `${API_BASE}/users/${USER_ID}/weekly-summary?week_start=${WEEK_START}&week_end=${WEEK_END}`
   );
   const { data: recommendations, loading: recsLoading, error: recsError } = useFetch(
-    `${API_BASE}/users/${USER_ID}/recommendations`
+    `${API_BASE}/users/${USER_ID}/recommendations?v=${recsVersion}`
   );
   const { data: sprout, loading: sproutLoading, error: sproutError } = useFetch(
     `${API_BASE}/users/${USER_ID}/sprout`
@@ -118,27 +118,31 @@ function Dashboard({ user, onLogout }) {
     `${API_BASE}/users/${USER_ID}/leaderboard`
   );
 
+  // Clear processingId only after the refetch completes, not right after the PATCH
+  useEffect(() => {
+    if (!recsLoading && processingId !== null) {
+      setProcessingId(null);
+    }
+  }, [recsLoading]);
 
-  const handleAcceptCarpool = (groupId, friendId) => {
-    setAcceptedCarpoolIds(prev => {
-      if (prev[groupId] === friendId) {
-        const next = { ...prev };
-        delete next[groupId];
-        return next;
-      }
-      return { ...prev, [groupId]: friendId };
+  const handleAcceptRec = async (recId) => {
+    setProcessingId(recId);
+    await fetch(`${API_BASE}/recommendations/${recId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'accepted' }),
     });
+    setRecsVersion(v => v + 1);
   };
 
-  const handleAcceptTransit = (groupKey, recId) => {
-    setAcceptedTransitIds(prev => {
-      if (prev[groupKey] === recId) {
-        const next = { ...prev };
-        delete next[groupKey];
-        return next;
-      }
-      return { ...prev, [groupKey]: recId };
+  const handleEndRec = async (recId) => {
+    setProcessingId(recId);
+    await fetch(`${API_BASE}/recommendations/${recId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'suggested' }),
     });
+    setRecsVersion(v => v + 1);
   };
 
   const handleMessage = (friendId, friendName) => {
@@ -147,7 +151,7 @@ function Dashboard({ user, onLogout }) {
     setActiveNav('messages');
   };
 
-  if (summaryLoading || recsLoading || sproutLoading) {
+  if (summaryLoading || (recsLoading && !recommendations) || sproutLoading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         <div style={{textAlign: 'center', maxWidth: '400px'}}>
@@ -381,8 +385,9 @@ function Dashboard({ user, onLogout }) {
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="carpool"
-                acceptedIds={acceptedCarpoolIds}
-                onAccept={handleAcceptCarpool}
+                processingId={processingId}
+                onAccept={handleAcceptRec}
+                onEnd={handleEndRec}
                 onMessage={handleMessage}
               />
             )}
@@ -390,8 +395,9 @@ function Dashboard({ user, onLogout }) {
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="transit"
-                acceptedIds={acceptedTransitIds}
-                onAccept={handleAcceptTransit}
+                processingId={processingId}
+                onAccept={handleAcceptRec}
+                onEnd={handleEndRec}
                 onMessage={handleMessage}
               />
             )}
