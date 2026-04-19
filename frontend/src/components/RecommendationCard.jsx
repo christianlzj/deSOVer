@@ -6,6 +6,102 @@ const formatDays = (daysArray) => {
   return shortDays.join(' · ');
 };
 
+const getSeededRandom = (seedStr) => {
+  let h = 0;
+  const str = String(seedStr);
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+};
+
+const FakeMap = ({ seed }) => {
+  const rand = getSeededRandom(seed || 'default');
+  
+  const roads = Array.from({ length: 4 }).map((_, i) => (
+    <line 
+      key={`v-${i}`}
+      x1={rand() * 200} y1="0" 
+      x2={rand() * 200} y2="100" 
+      stroke="white" strokeWidth="4" opacity="0.7" 
+    />
+  )).concat(
+    Array.from({ length: 3 }).map((_, i) => (
+      <line 
+        key={`h-${i}`}
+        x1="0" y1={rand() * 100} 
+        x2="200" y2={rand() * 100} 
+        stroke="white" strokeWidth="4" opacity="0.7" 
+      />
+    ))
+  );
+
+  const startX = 20 + rand() * 40;
+  const startY = 60 + rand() * 20;
+
+  const midX = 80 + rand() * 40;
+  const midY = 20 + rand() * 60;
+
+  const endX = 140 + rand() * 40;
+  const endY = 20 + rand() * 40;
+
+  return (
+    <div style={{
+      width: '100%',
+      height: '110px',
+      background: '#E8ECE9',
+      borderRadius: '12px',
+      position: 'relative',
+      overflow: 'hidden',
+      marginBottom: '16px',
+      border: '1px solid rgba(45,74,62,0.08)'
+    }}>
+      <svg width="100%" height="100%" viewBox="0 0 200 100" preserveAspectRatio="none">
+        {roads}
+        <path
+          d={`M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}`}
+          fill="none"
+          stroke="#B8E06A"
+          strokeWidth="8"
+          strokeLinecap="round"
+          opacity="0.6"
+        />
+        <path
+          d={`M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}`}
+          fill="none"
+          stroke="#2D4A3E"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray="6,6"
+        />
+        <circle cx={startX} cy={startY} r="5" fill="#4A7C59" stroke="white" strokeWidth="2" />
+        <circle cx={endX} cy={endY} r="5" fill="#C45C3A" stroke="white" strokeWidth="2" />
+      </svg>
+      <div style={{
+        position: 'absolute',
+        top: '8px',
+        left: '8px',
+        background: 'white',
+        padding: '3px 8px',
+        borderRadius: '8px',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        color: '#2D4A3E',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+      }}>
+        <span>📍</span> Route Overview
+      </div>
+    </div>
+  );
+};
+
 export default function RecommendationCard({ rec, isAccepted, processingId, onAccept, onMessage, nested }) {
   const isCarpool = rec.type === 'carpool';
 
@@ -96,6 +192,9 @@ export default function RecommendationCard({ rec, isAccepted, processingId, onAc
             <div style={{ fontSize: '9px', fontWeight: '400', color: '#4A7C59', marginTop: '3px' }}>Fuel</div>
           </div>
         </div>
+
+        {/* Fake Map */}
+        <FakeMap seed={rec.id} />
 
         {/* Divider + label */}
         <div style={{

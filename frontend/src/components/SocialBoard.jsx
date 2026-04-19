@@ -7,10 +7,10 @@ const MOCK_POSTS = [
     avatar: 'S',
     avatarColor: '#5B8FA8',
     timeAgo: '2h ago',
-    content: 'Just finished my first week of carpooling with Jake to campus! Saved an estimated 12 lbs of CO₂ and split gas costs. Honestly the morning conversations make the commute way better too 🚗💚',
+    content: 'Just finished my first week of carpooling with Meagan to campus! Saved an estimated 12 lbs of CO₂ and split gas costs. Honestly the morning conversations make the commute way better too 🚗💚',
     likes: 14,
     liked: false,
-    image: null,
+    image: '1.png',
     tag: 'Carpool Win',
     comments: [
       { id: 1, author: 'Jake M.', avatar: 'J', avatarColor: '#4A7C59', content: 'Best carpool buddy! Next week we should try the express route 🛣️', timeAgo: '1h ago' },
@@ -23,10 +23,10 @@ const MOCK_POSTS = [
     avatar: 'D',
     avatarColor: '#C45C3A',
     timeAgo: '5h ago',
-    content: 'Pro tip: If you\'re carpooling on I-85, the HOV lane saves about 15 minutes during rush hour. Our 3-person carpool has been crushing it this month! 📈',
+    content: 'Pro tip: If you\'re carpooling on I-85, the HOV lane saves about 15 minutes during rush hour. Our 4-person carpool has been crushing it this month! 📈',
     likes: 23,
     liked: true,
-    image: null,
+    image: '2.png',
     tag: 'Tip',
     comments: [
       { id: 3, author: 'Lin W.', avatar: 'L', avatarColor: '#7DB87A', content: 'The HOV lane is a game changer. We should have a group for the Midtown → Tech Square route!', timeAgo: '4h ago' },
@@ -41,7 +41,7 @@ const MOCK_POSTS = [
     content: 'Our carpool group hit 100 lbs of CO₂ saved together! 🌱🎉 Shoutout to Maria and David for being the most consistent riders. Let\'s keep this streak going!',
     likes: 31,
     liked: false,
-    image: null,
+    image: '3.png',
     tag: 'Milestone',
     comments: [
       { id: 4, author: 'David R.', avatar: 'D', avatarColor: '#C45C3A', content: 'Couldn\'t have done it without this group! 💪', timeAgo: '23h ago' },
@@ -96,19 +96,19 @@ export default function SocialBoard({ onBack }) {
     setPosts(prev => prev.map(p =>
       p.id === postId
         ? {
-            ...p,
-            comments: [
-              ...p.comments,
-              {
-                id: Date.now(),
-                author: 'You',
-                avatar: 'Y',
-                avatarColor: '#2D4A3E',
-                content: text,
-                timeAgo: 'Just now'
-              }
-            ]
-          }
+          ...p,
+          comments: [
+            ...p.comments,
+            {
+              id: Date.now(),
+              author: 'You',
+              avatar: 'Y',
+              avatarColor: '#2D4A3E',
+              content: text,
+              timeAgo: 'Just now'
+            }
+          ]
+        }
         : p
     ));
     setNewComment(prev => ({ ...prev, [postId]: '' }));
@@ -235,6 +235,21 @@ export default function SocialBoard({ onBack }) {
             }}>
               {post.content}
             </p>
+
+            {post.image && (
+              <div style={{ marginTop: '4px', width: '100%' }}>
+                <img
+                  src={post.image}
+                  alt="Post attachment"
+                  style={{
+                    width: '100%',
+                    borderRadius: '12px',
+                    objectFit: 'cover',
+                    display: 'block'
+                  }}
+                />
+              </div>
+            )}
 
             {/* Action bar */}
             <div style={{
