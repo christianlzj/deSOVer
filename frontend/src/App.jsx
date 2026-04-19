@@ -82,6 +82,10 @@ function Dashboard({ user, onLogout }) {
   const [customStartDate, setCustomStartDate] = useState('2025-01-01');
   const [recsVersion, setRecsVersion] = useState(0);
   const [processingId, setProcessingId] = useState(null);
+  const [friendsVersion, setFriendsVersion] = useState(0);
+  const [showAddFriend, setShowAddFriend] = useState(false);
+  const [addFriendSearch, setAddFriendSearch] = useState('');
+  const [friendActionLoading, setFriendActionLoading] = useState(null);
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [selectedFriendName, setSelectedFriendName] = useState(null);
 
@@ -107,7 +111,10 @@ function Dashboard({ user, onLogout }) {
     `${API_BASE}/users/${USER_ID}/sprout`
   );
   const { data: friends, loading: friendsLoading, error: friendsError } = useFetch(
-    `${API_BASE}/users/${USER_ID}/friends`
+    `${API_BASE}/users/${USER_ID}/friends?v=${friendsVersion}`
+  );
+  const { data: nonFriends, loading: nonFriendsLoading } = useFetch(
+    showAddFriend ? `${API_BASE}/users/${USER_ID}/non-friends?v=${friendsVersion}` : null
   );
 
   const { data: userData, loading: userLoading, error: userError } = useFetch(
@@ -143,6 +150,32 @@ function Dashboard({ user, onLogout }) {
       body: JSON.stringify({ status: 'suggested' }),
     });
     setRecsVersion(v => v + 1);
+  };
+
+  const handleAddFriend = async (friendId) => {
+    setFriendActionLoading(friendId);
+    try {
+      await fetch(`${API_BASE}/users/${USER_ID}/friends`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friend_id: friendId }),
+      });
+      setFriendsVersion(v => v + 1);
+    } finally {
+      setFriendActionLoading(null);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId) => {
+    setFriendActionLoading(friendId);
+    try {
+      await fetch(`${API_BASE}/users/${USER_ID}/friends/${friendId}`, {
+        method: 'DELETE',
+      });
+      setFriendsVersion(v => v + 1);
+    } finally {
+      setFriendActionLoading(null);
+    }
   };
 
   const handleMessage = (friendId, friendName) => {
@@ -418,126 +451,197 @@ function Dashboard({ user, onLogout }) {
             {activeNav === 'messages' && (
               <Messages userId={USER_ID} selectedFriendId={selectedFriendId} selectedFriendName={selectedFriendName} />
             )}
-            {activeNav === 'friends' && (
-              <div>
-                {/* Leaderboard button */}
-                <button
-                  onClick={() => setActiveNav('leaderboard')}
-                  style={{
-                    width: '100%',
-                    padding: '14px 18px',
-                    borderRadius: '16px',
-                    border: '1px solid rgba(184,224,106,0.3)',
-                    background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
-                    color: '#F5F0E8',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    fontFamily: "'DM Sans', sans-serif",
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    marginBottom: '14px',
-                    boxShadow: '0 4px 14px rgba(45,74,62,0.2)',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                  }}
-                  onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
-                  onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                >
-                  <span style={{ fontSize: '18px' }}>🏆</span>
-                  <span>Leaderboard</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.6 }}>→</span>
-                </button>
-                {friendsLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
-                    Loading friends...
-                  </div>
-                ) : friendsError || !friends?.friends || friends.friends.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
-                    No friends yet. Add some to get started!
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {friends.friends.map((friend) => {
-                      const colors = ['#4A7C59', '#5B8FA8', '#C45C3A', '#E8C547', '#7DB87A'];
-                      const hashCode = (str) => {
-                        let hash = 0;
-                        for (let i = 0; i < str.length; i++) {
-                          hash = ((hash << 5) - hash) + str.charCodeAt(i);
-                          hash = hash & hash;
-                        }
-                        return Math.abs(hash);
-                      };
-                      const bgColor = colors[hashCode(friend.user_name) % colors.length];
-                      return (
-                        <div
-                          key={friend.user_id}
-                          style={{
-                            background: 'white',
-                            borderRadius: '16px',
-                            padding: '14px 16px',
+            {activeNav === 'friends' && (() => {
+              const colors = ['#4A7C59', '#5B8FA8', '#C45C3A', '#E8C547', '#7DB87A'];
+              const hashCode = (str) => {
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                  hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                  hash = hash & hash;
+                }
+                return Math.abs(hash);
+              };
+              const filteredNonFriends = (nonFriends?.users || []).filter(u =>
+                u.user_name.toLowerCase().includes(addFriendSearch.toLowerCase())
+              );
+              return (
+                <div>
+                  {/* Leaderboard button */}
+                  <button
+                    onClick={() => setActiveNav('leaderboard')}
+                    style={{
+                      width: '100%', padding: '14px 18px', borderRadius: '16px',
+                      border: '1px solid rgba(184,224,106,0.3)',
+                      background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
+                      color: '#F5F0E8', fontSize: '14px', fontWeight: '600',
+                      fontFamily: "'DM Sans', sans-serif", cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      gap: '8px', marginBottom: '14px',
+                      boxShadow: '0 4px 14px rgba(45,74,62,0.2)',
+                      transition: 'transform 0.15s ease'
+                    }}
+                    onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                    onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                  >
+                    <span style={{ fontSize: '18px' }}>🏆</span>
+                    <span>Leaderboard</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.6 }}>→</span>
+                  </button>
+
+                  {/* Add Friend toggle button */}
+                  <button
+                    onClick={() => { setShowAddFriend(v => !v); setAddFriendSearch(''); }}
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: '12px',
+                      border: showAddFriend ? 'none' : '1.5px dashed rgba(45,74,62,0.3)',
+                      background: showAddFriend ? '#F2F6F3' : 'transparent',
+                      color: '#2D4A3E', fontSize: '13px', fontWeight: '600',
+                      fontFamily: "'DM Sans', sans-serif", cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      gap: '6px', marginBottom: '14px'
+                    }}
+                  >
+                    {showAddFriend ? '✕ Cancel' : '+ Add Friend'}
+                  </button>
+
+                  {/* Add Friend panel */}
+                  {showAddFriend && (
+                    <div style={{
+                      background: 'white', borderRadius: '16px', padding: '14px',
+                      boxShadow: '0 2px 10px rgba(45,74,62,0.08)',
+                      border: '1px solid rgba(45,74,62,0.08)', marginBottom: '16px'
+                    }}>
+                      <input
+                        type="text"
+                        value={addFriendSearch}
+                        onChange={(e) => setAddFriendSearch(e.target.value)}
+                        placeholder="Search by name..."
+                        style={{
+                          width: '100%', padding: '9px 12px', borderRadius: '8px',
+                          border: '1px solid rgba(45,74,62,0.2)', fontSize: '13px',
+                          fontFamily: "'DM Sans', sans-serif", outline: 'none',
+                          boxSizing: 'border-box', marginBottom: '10px'
+                        }}
+                      />
+                      {nonFriendsLoading ? (
+                        <div style={{ textAlign: 'center', padding: '12px', color: '#8A9A8E', fontSize: '13px' }}>
+                          Loading...
+                        </div>
+                      ) : filteredNonFriends.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '12px', color: '#8A9A8E', fontSize: '13px' }}>
+                          {addFriendSearch ? 'No users match your search.' : 'Everyone is already your friend!'}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
+                          {filteredNonFriends.map(u => {
+                            const isAdding = friendActionLoading === u.user_id;
+                            return (
+                              <div key={u.user_id} style={{
+                                display: 'flex', alignItems: 'center', gap: '10px',
+                                padding: '8px 10px', borderRadius: '10px', background: '#F8FAF8'
+                              }}>
+                                <div style={{
+                                  width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0,
+                                  background: colors[hashCode(u.user_name) % colors.length],
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: '14px', fontWeight: '700', color: 'white',
+                                  fontFamily: "'DM Serif Display', serif"
+                                }}>
+                                  {u.user_name.charAt(0).toUpperCase()}
+                                </div>
+                                <span style={{ flex: 1, fontSize: '13px', fontWeight: '500', color: '#1A2B24' }}>
+                                  {u.user_name}
+                                </span>
+                                <button
+                                  onClick={() => handleAddFriend(u.user_id)}
+                                  disabled={isAdding}
+                                  style={{
+                                    padding: '6px 12px', borderRadius: '8px', fontSize: '11px',
+                                    fontWeight: '600', border: 'none', cursor: isAdding ? 'not-allowed' : 'pointer',
+                                    fontFamily: "'DM Sans', sans-serif",
+                                    background: isAdding ? '#ccc' : '#2D4A3E',
+                                    color: isAdding ? '#888' : '#B8E06A'
+                                  }}
+                                >
+                                  {isAdding ? '...' : 'Add'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Current friends list */}
+                  {friendsLoading ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
+                      Loading friends...
+                    </div>
+                  ) : friendsError || !friends?.friends || friends.friends.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
+                      No friends yet. Add some to get started!
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {friends.friends.map((friend) => {
+                        const bgColor = colors[hashCode(friend.user_name) % colors.length];
+                        const isRemoving = friendActionLoading === friend.user_id;
+                        return (
+                          <div key={friend.user_id} style={{
+                            background: 'white', borderRadius: '16px', padding: '12px 14px',
                             boxShadow: '0 2px 10px rgba(45,74,62,0.06)',
                             border: '1px solid rgba(45,74,62,0.06)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '12px'
-                          }}
-                        >
-                          {/* Avatar with colored background */}
-                          <div
-                            style={{
-                              width: '44px',
-                              height: '44px',
-                              borderRadius: '50%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '18px',
-                              fontWeight: '700',
-                              color: 'white',
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            opacity: isRemoving ? 0.5 : 1, transition: 'opacity 0.2s'
+                          }}>
+                            <div style={{
+                              width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: '16px', fontWeight: '700', color: 'white',
                               fontFamily: "'DM Serif Display', serif",
-                              flexShrink: 0,
-                              background: bgColor,
-                              border: '2px solid white',
+                              background: bgColor, border: '2px solid white',
                               boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-                            }}
-                          >
-                            {friend.user_name?.charAt(0).toUpperCase() || '👤'}
-                          </div>
-                          {/* Friend info */}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{
-                              fontWeight: '600',
-                              fontSize: '14px',
-                              color: '#1A2B24',
-                              marginBottom: '2px'
                             }}>
-                              {friend.user_name}
-                            </p>
+                              {friend.user_name?.charAt(0).toUpperCase() || '?'}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontWeight: '600', fontSize: '14px', color: '#1A2B24', marginBottom: '1px' }}>
+                                {friend.user_name}
+                              </p>
+                              <p style={{ fontSize: '11px', color: '#8A9A8E' }}>Connected</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button
+                                onClick={() => handleMessage(friend.user_id, friend.user_name)}
+                                style={{
+                                  padding: '7px 10px', borderRadius: '8px', fontSize: '12px',
+                                  border: '1.5px solid rgba(45,74,62,0.18)', background: 'white',
+                                  color: '#2D4A3E', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif"
+                                }}
+                              >💬</button>
+                              <button
+                                onClick={() => handleRemoveFriend(friend.user_id)}
+                                disabled={isRemoving}
+                                style={{
+                                  padding: '7px 10px', borderRadius: '8px', fontSize: '11px',
+                                  fontWeight: '600', border: 'none',
+                                  background: isRemoving ? '#ccc' : '#FFE8E8',
+                                  color: isRemoving ? '#888' : '#C45C3A',
+                                  cursor: isRemoving ? 'not-allowed' : 'pointer',
+                                  fontFamily: "'DM Sans', sans-serif"
+                                }}
+                              >{isRemoving ? '...' : 'Remove'}</button>
+                            </div>
                           </div>
-                          {/* Status badge */}
-                          <div
-                            style={{
-                              background: '#E8F5E9',
-                              color: '#2D7A32',
-                              padding: '6px 12px',
-                              borderRadius: '20px',
-                              fontSize: '11px',
-                              fontWeight: '600',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            ✓ Connected
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Navigation bar */}

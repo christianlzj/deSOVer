@@ -150,13 +150,31 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
     finally:
         conn.close()
 
+def calc_fuel_saved_dollars(co2_saved_kg, distance_miles=None):
+    """
+    Estimate fuel cost saved.
+    Primary: use co2_saved_kg (1 gallon gasoline → 8.887 kg CO2).
+    Fallback: use distance_miles at assumed 25 MPG if CO2 is zero/null.
+    Gas price assumed $3.50/gallon.
+    """
+    GAS_PRICE = 3.50
+    CO2_PER_GALLON_KG = 8.887
+    MPG = 25.0
+    if co2_saved_kg and co2_saved_kg > 0:
+        gallons = co2_saved_kg / CO2_PER_GALLON_KG
+    elif distance_miles and distance_miles > 0:
+        gallons = float(distance_miles) / MPG
+    else:
+        return 0.0
+    return round(gallons * GAS_PRICE, 2)
+
 def fetch_routine_info(routine_id: int):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT t.start_lat, t.start_lon, t.end_lat, t.end_lon,
-                       t.start_time
+                       t.start_time, t.distance_miles
                 FROM routines r
                 JOIN trips t ON r.routine_id = t.trip_id
                 WHERE r.routine_id = %s
@@ -164,9 +182,8 @@ def fetch_routine_info(routine_id: int):
             row = cur.fetchone()
             if not row:
                 return None
-            start_lat, start_lon, end_lat, end_lon, start_time = row
+            start_lat, start_lon, end_lat, end_lon, start_time, distance_miles = row
 
-            # Assume recurring trips occur on weekdays (adjustable)
             days_of_week_str = "MON,TUE,WED,THU,FRI"
             time_window_start = start_time.time()
 
@@ -176,7 +193,8 @@ def fetch_routine_info(routine_id: int):
                 'destination_lat': float(end_lat),
                 'destination_lon': float(end_lon),
                 'days_of_week': days_of_week_str,
-                'time_window_start': time_window_start
+                'time_window_start': time_window_start,
+                'distance_miles': float(distance_miles) if distance_miles else None
             }
     finally:
         conn.close()
@@ -361,7 +379,10 @@ def get_recommendations(user_id: int, limit: int = 10):
         days_of_week = get_days_of_week(routine_info['days_of_week'])
         suggested_departure = get_departure_time_from_routine(routine_info['time_window_start'])
         co2_saved_lbs = (group['co2_saved_kg'] or 0) * 2.205
-        fuel_saved_dollars = round(co2_saved_lbs * 0.01, 2)
+        fuel_saved_dollars = calc_fuel_saved_dollars(
+            group['co2_saved_kg'],
+            routine_info.get('distance_miles')
+        )
 
         route = {
             "origin": {"lat": routine_info['origin_lat'], "lon": routine_info['origin_lon']},
@@ -401,6 +422,10 @@ def get_recommendations(user_id: int, limit: int = 10):
                 "destination": {"lat": routine_info['destination_lat'], "lon": routine_info['destination_lon']}
             }
         co2_saved_lbs = (item['co2_saved_kg'] or 0) * 2.205
+        fuel_saved_dollars = calc_fuel_saved_dollars(
+            item['co2_saved_kg'],
+            routine_info.get('distance_miles') if routine_info else None
+        )
         details = item['details']
 
         final_recommendations.append({
@@ -410,6 +435,7 @@ def get_recommendations(user_id: int, limit: int = 10):
             'suggested_departure': details.get('departure_time', ''),
             'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
             'co2_saved_lbs': round(co2_saved_lbs, 1),
+            'fuel_saved_dollars': fuel_saved_dollars,
             'status': item['status'],
             'transit_details': {
                 'route_short_name': details.get('route_short_name', ''),
@@ -582,6 +608,72 @@ def get_friends(user_id: int):
             else:
                 friends = []
             return {"user_id": user_id, "friends": friends}
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}/non-friends")
+def get_non_friends(user_id: int):
+    """All users who are not yet friends with user_id (excluding self)."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, user_name FROM users
+                WHERE user_id != %s
+                  AND user_id NOT IN (
+                    SELECT CASE WHEN user_id_1 = %s THEN user_id_2 ELSE user_id_1 END
+                    FROM friendships
+                    WHERE (user_id_1 = %s OR user_id_2 = %s)
+                      AND status = 'accepted'
+                  )
+                ORDER BY user_name
+            """, (user_id, user_id, user_id, user_id))
+            rows = cur.fetchall()
+            return {"users": [{"user_id": row[0], "user_name": row[1]} for row in rows]}
+    finally:
+        conn.close()
+
+class AddFriendRequest(BaseModel):
+    friend_id: int
+
+@app.post("/users/{user_id}/friends")
+def add_friend(user_id: int, body: AddFriendRequest):
+    if user_id == body.friend_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot add yourself")
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Store with smaller id first to avoid duplicates
+            id1, id2 = min(user_id, body.friend_id), max(user_id, body.friend_id)
+            cur.execute("""
+                INSERT INTO friendships (user_id_1, user_id_2, status)
+                VALUES (%s, %s, 'accepted')
+                ON CONFLICT (user_id_1, user_id_2) DO UPDATE SET status = 'accepted'
+            """, (id1, id2))
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.delete("/users/{user_id}/friends/{friend_id}")
+def remove_friend(user_id: int, friend_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM friendships
+                WHERE (user_id_1 = %s AND user_id_2 = %s)
+                   OR (user_id_1 = %s AND user_id_2 = %s)
+            """, (user_id, friend_id, friend_id, user_id))
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
         conn.close()
 
