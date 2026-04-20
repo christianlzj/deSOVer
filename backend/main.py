@@ -1,3 +1,5 @@
+import os
+
 import psycopg2
 from fastapi import FastAPI
 from datetime import datetime, timedelta, date
@@ -9,11 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 # ---------- Database Configuration ----------
-DB_HOST = "aws-1-us-east-2.pooler.supabase.com"
-DB_NAME = "postgres"
-DB_USER = "postgres.fdcwkvaivhrokkotmzwf"
-DB_PASSWORD = "CS8803desover"
-DB_PORT = 5432
+# DB_HOST = "db.fdcwkvaivhrokkotmzwf.supabase.co" # IPv6 host
+DB_HOST = os.environ.get("DB_HOST", "aws-1-us-east-2.pooler.supabase.com")
+DB_NAME = os.environ.get("DB_NAME", "postgres")
+# DB_USER = "postgres" # IPv6 user
+DB_USER = os.environ.get("DB_USER", "postgres.fdcwkvaivhrokkotmzwf")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "CS8803desover")
+DB_PORT = os.environ.get("DB_PORT", 5432)
 
 def get_db_connection():
     return psycopg2.connect(
@@ -46,6 +50,8 @@ class Match(BaseModel):
     friend_id: int
     days: List[str]
     score: float
+    recommendation_id: int
+    status: str
 
 class Recommendation(BaseModel):
     type: str
@@ -57,10 +63,46 @@ class Recommendation(BaseModel):
     fuel_saved_dollars: Optional[float] = None
     matches: Optional[List[Match]] = None
     transit_details: Optional[Dict[str, Any]] = None
+    status: Optional[str] = 'suggested'
+
+class UpdateStatusRequest(BaseModel):
+    status: str
 
 class Sprout(BaseModel):
     score: int
     message: str
+
+class User(BaseModel):
+    user_id: int
+    user_name: str
+
+class CreateUserRequest(BaseModel):
+    user_name: str
+    home_lat: float
+    home_lon: float
+    work_lat: float
+    work_lon: float
+
+class Message(BaseModel):
+    message_id: int
+    sender_id: int
+    sender_name: str
+    recipient_id: int
+    content: str
+    created_at: str
+    read: bool
+
+class SendMessageRequest(BaseModel):
+    recipient_id: int
+    content: str
+
+class Conversation(BaseModel):
+    friend_id: int
+    friend_name: str
+    last_message: str
+    last_message_time: str
+    unread_count: int
+    is_sender: bool
 
 # ---------- Helper Functions ----------
 def fetch_user_weekly_trips(user_id: int, week_start: date, week_end: date):
@@ -85,7 +127,7 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
             cur.execute("""
                 SELECT r.recommendation_id, r.mode, r.friend_user_id, r.friend_routine_id,
                        r.routine_id, r.match_score, r.co2_saved_kg, r.details,
-                       u.user_name as friend_name
+                       u.user_name as friend_name, r.status
                 FROM recommendations r
                 LEFT JOIN users u ON r.friend_user_id = u.user_id
                 WHERE r.user_id = %s
@@ -94,7 +136,7 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
             """, (user_id, limit))
             rows = cur.fetchall()
             columns = ['recommendation_id', 'mode', 'friend_user_id', 'friend_routine_id',
-                       'routine_id', 'match_score', 'co2_saved_kg', 'details', 'friend_name']
+                       'routine_id', 'match_score', 'co2_saved_kg', 'details', 'friend_name', 'status']
             # Convert Decimal to float for co2_saved_kg and match_score
             result = []
             for row in rows:
@@ -108,26 +150,51 @@ def fetch_user_recommendations(user_id: int, limit: int = 10):
     finally:
         conn.close()
 
+def calc_fuel_saved_dollars(co2_saved_kg, distance_miles=None):
+    """
+    Estimate fuel cost saved.
+    Primary: use co2_saved_kg (1 gallon gasoline → 8.887 kg CO2).
+    Fallback: use distance_miles at assumed 25 MPG if CO2 is zero/null.
+    Gas price assumed $3.50/gallon.
+    """
+    GAS_PRICE = 3.50
+    CO2_PER_GALLON_KG = 8.887
+    MPG = 25.0
+    if co2_saved_kg and co2_saved_kg > 0:
+        gallons = co2_saved_kg / CO2_PER_GALLON_KG
+    elif distance_miles and distance_miles > 0:
+        gallons = float(distance_miles) / MPG
+    else:
+        return 0.0
+    return round(gallons * GAS_PRICE, 2)
+
 def fetch_routine_info(routine_id: int):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT origin_lat, origin_lon, destination_lat, destination_lon,
-                       days_of_week, time_window_start
-                FROM routines
-                WHERE routine_id = %s
+                SELECT t.start_lat, t.start_lon, t.end_lat, t.end_lon,
+                       t.start_time, t.distance_miles
+                FROM routines r
+                JOIN trips t ON r.routine_id = t.trip_id
+                WHERE r.routine_id = %s
             """, (routine_id,))
             row = cur.fetchone()
             if not row:
                 return None
+            start_lat, start_lon, end_lat, end_lon, start_time, distance_miles = row
+
+            days_of_week_str = "MON,TUE,WED,THU,FRI"
+            time_window_start = start_time.time()
+
             return {
-                'origin_lat': float(row[0]),
-                'origin_lon': float(row[1]),
-                'destination_lat': float(row[2]),
-                'destination_lon': float(row[3]),
-                'days_of_week': row[4],
-                'time_window_start': row[5]
+                'origin_lat': float(start_lat),
+                'origin_lon': float(start_lon),
+                'destination_lat': float(end_lat),
+                'destination_lon': float(end_lon),
+                'days_of_week': days_of_week_str,
+                'time_window_start': time_window_start,
+                'distance_miles': float(distance_miles) if distance_miles else None
             }
     finally:
         conn.close()
@@ -160,10 +227,60 @@ app = FastAPI(title="DeSOVer API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite default dev port
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+        "http://127.0.0.1:5176",
+        "https://desover-frontend.onrender.com",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.post("/users", response_model=User)
+def create_user(request: CreateUserRequest):
+    """Create a new user with auto-generated ID"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get next user_id
+            cur.execute("SELECT MAX(user_id) FROM users")
+            max_id = cur.fetchone()[0]
+            new_user_id = (max_id or 0) + 1
+            
+            # Insert new user
+            cur.execute("""
+                INSERT INTO users (user_id, user_name, home_lat, home_lon, work_lat, work_lon, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                RETURNING user_id, user_name
+            """, (new_user_id, request.user_name, request.home_lat, request.home_lon, request.work_lat, request.work_lon))
+            row = cur.fetchone()
+            conn.commit()
+            return {"user_id": row[0], "user_name": row[1]}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}", response_model=User)
+def get_user(user_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, user_name FROM users WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            if row:
+                return {"user_id": row[0], "user_name": row[1]}
+            else:
+                return {"user_id": user_id, "user_name": f"User {user_id}"}
+    finally:
+        conn.close()
 
 @app.get("/users/{user_id}/weekly-summary", response_model=WeeklySummary)
 def weekly_summary(user_id: int, week_start: Optional[date] = None, week_end: Optional[date] = None):
@@ -208,30 +325,38 @@ def weekly_summary(user_id: int, week_start: Optional[date] = None, week_end: Op
 def get_recommendations(user_id: int, limit: int = 10):
     recs = fetch_user_recommendations(user_id, limit)
 
-    carpool_groups = {}
+    # Use route geometry as key for grouping carpool matches
+    carpool_groups = {}  # key: (origin_lat, origin_lon, dest_lat, dest_lon) -> dict
     transit_items = []
 
     for r in recs:
         if r['mode'] == 'carpool':
-            key = r['routine_id']
-            if key not in carpool_groups:
-                # Convert details if it's a string, else use directly
-                details = r['details']
-                if isinstance(details, str):
-                    details = json.loads(details) if details else {}
-                else:
-                    details = details or {}
-                carpool_groups[key] = {
+            # Fetch routine info to get the route geometry
+            routine_info = fetch_routine_info(r['routine_id'])
+            if not routine_info:
+                continue
+            route_key = (
+                routine_info['origin_lat'], routine_info['origin_lon'],
+                routine_info['destination_lat'], routine_info['destination_lon']
+            )
+            if route_key not in carpool_groups:
+                carpool_groups[route_key] = {
                     'recommendation_id': r['recommendation_id'],
                     'co2_saved_kg': r['co2_saved_kg'],
-                    'matches': [],
-                    'details': details
+                    'routine_info': routine_info,
+                    'matches': {}  # friend_id -> {friend_name, score}
                 }
-            carpool_groups[key]['matches'].append({
-                'friend_name': r['friend_name'],
-                'friend_id': r['friend_user_id'],
-                'score': r['match_score']
-            })
+            # Keep the best score for each friend in this route
+            friend_id = r['friend_user_id']
+            if friend_id not in carpool_groups[route_key]['matches'] or \
+               r['match_score'] > carpool_groups[route_key]['matches'][friend_id]['score']:
+                carpool_groups[route_key]['matches'][friend_id] = {
+                    'friend_name': r['friend_name'],
+                    'friend_id': friend_id,
+                    'score': r['match_score'],
+                    'recommendation_id': r['recommendation_id'],
+                    'status': r.get('status', 'suggested')
+                }
         else:  # transit
             details = r['details']
             if isinstance(details, str):
@@ -242,20 +367,22 @@ def get_recommendations(user_id: int, limit: int = 10):
                 'recommendation_id': r['recommendation_id'],
                 'routine_id': r['routine_id'],
                 'co2_saved_kg': r['co2_saved_kg'],
-                'details': details
+                'details': details,
+                'status': r.get('status', 'suggested')
             })
 
     final_recommendations = []
 
-    # Process carpool groups
-    for routine_id, group in carpool_groups.items():
-        routine_info = fetch_routine_info(routine_id)
-        if not routine_info:
-            continue
+    # Build carpool cards
+    for group in carpool_groups.values():
+        routine_info = group['routine_info']
         days_of_week = get_days_of_week(routine_info['days_of_week'])
         suggested_departure = get_departure_time_from_routine(routine_info['time_window_start'])
         co2_saved_lbs = (group['co2_saved_kg'] or 0) * 2.205
-        fuel_saved_dollars = round(co2_saved_lbs * 0.01, 2)
+        fuel_saved_dollars = calc_fuel_saved_dollars(
+            group['co2_saved_kg'],
+            routine_info.get('distance_miles')
+        )
 
         route = {
             "origin": {"lat": routine_info['origin_lat'], "lon": routine_info['origin_lon']},
@@ -267,8 +394,10 @@ def get_recommendations(user_id: int, limit: int = 10):
                 friend_name=m['friend_name'],
                 friend_id=m['friend_id'],
                 days=days_of_week,
-                score=m['score']
-            ) for m in group['matches']
+                score=m['score'],
+                recommendation_id=m['recommendation_id'],
+                status=m['status']
+            ) for m in group['matches'].values()
         ]
 
         final_recommendations.append({
@@ -282,7 +411,7 @@ def get_recommendations(user_id: int, limit: int = 10):
             'matches': matches
         })
 
-    # Process transit items
+    # Process transit items (unchanged, but ensure fetch_routine_info is used correctly)
     for item in transit_items:
         routine_info = fetch_routine_info(item['routine_id'])
         if not routine_info:
@@ -293,6 +422,10 @@ def get_recommendations(user_id: int, limit: int = 10):
                 "destination": {"lat": routine_info['destination_lat'], "lon": routine_info['destination_lon']}
             }
         co2_saved_lbs = (item['co2_saved_kg'] or 0) * 2.205
+        fuel_saved_dollars = calc_fuel_saved_dollars(
+            item['co2_saved_kg'],
+            routine_info.get('distance_miles') if routine_info else None
+        )
         details = item['details']
 
         final_recommendations.append({
@@ -300,8 +433,10 @@ def get_recommendations(user_id: int, limit: int = 10):
             'id': item['recommendation_id'],
             'route': route,
             'suggested_departure': details.get('departure_time', ''),
-            'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],  # could be refined
+            'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
             'co2_saved_lbs': round(co2_saved_lbs, 1),
+            'fuel_saved_dollars': fuel_saved_dollars,
+            'status': item['status'],
             'transit_details': {
                 'route_short_name': details.get('route_short_name', ''),
                 'route_long_name': details.get('route_long_name', ''),
@@ -317,6 +452,26 @@ def get_recommendations(user_id: int, limit: int = 10):
         })
 
     return {"recommendations": final_recommendations}
+
+@app.patch("/recommendations/{rec_id}/status")
+def update_recommendation_status(rec_id: int, body: UpdateStatusRequest):
+    if body.status not in ('suggested', 'accepted'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="status must be 'suggested' or 'accepted'")
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE recommendations SET status = %s WHERE recommendation_id = %s",
+                (body.status, rec_id)
+            )
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 @app.get("/users/{user_id}/sprout", response_model=Sprout)
 def get_sprout(user_id: int):
@@ -455,3 +610,204 @@ def get_friends(user_id: int):
             return {"user_id": user_id, "friends": friends}
     finally:
         conn.close()
+
+@app.get("/users/{user_id}/non-friends")
+def get_non_friends(user_id: int):
+    """All users who are not yet friends with user_id (excluding self)."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, user_name FROM users
+                WHERE user_id != %s
+                  AND user_id NOT IN (
+                    SELECT CASE WHEN user_id_1 = %s THEN user_id_2 ELSE user_id_1 END
+                    FROM friendships
+                    WHERE (user_id_1 = %s OR user_id_2 = %s)
+                      AND status = 'accepted'
+                  )
+                ORDER BY user_name
+            """, (user_id, user_id, user_id, user_id))
+            rows = cur.fetchall()
+            return {"users": [{"user_id": row[0], "user_name": row[1]} for row in rows]}
+    finally:
+        conn.close()
+
+class AddFriendRequest(BaseModel):
+    friend_id: int
+
+@app.post("/users/{user_id}/friends")
+def add_friend(user_id: int, body: AddFriendRequest):
+    if user_id == body.friend_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot add yourself")
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Store with smaller id first to avoid duplicates
+            id1, id2 = min(user_id, body.friend_id), max(user_id, body.friend_id)
+            cur.execute("""
+                INSERT INTO friendships (user_id_1, user_id_2, status)
+                VALUES (%s, %s, 'accepted')
+                ON CONFLICT (user_id_1, user_id_2) DO UPDATE SET status = 'accepted'
+            """, (id1, id2))
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.delete("/users/{user_id}/friends/{friend_id}")
+def remove_friend(user_id: int, friend_id: int):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM friendships
+                WHERE (user_id_1 = %s AND user_id_2 = %s)
+                   OR (user_id_1 = %s AND user_id_2 = %s)
+            """, (user_id, friend_id, friend_id, user_id))
+            conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}/inbox")
+def get_inbox(user_id: int):
+    """Get list of conversations with unread counts and last message"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get all conversations (both sent and received messages)
+            cur.execute("""
+                SELECT DISTINCT 
+                    CASE 
+                        WHEN sender_id = %s THEN recipient_id
+                        ELSE sender_id
+                    END AS friend_id,
+                    u.user_name as friend_name
+                FROM messages
+                LEFT JOIN users u ON u.user_id = (
+                    CASE 
+                        WHEN sender_id = %s THEN recipient_id
+                        ELSE sender_id
+                    END
+                )
+                WHERE sender_id = %s OR recipient_id = %s
+                ORDER BY friend_id
+            """, (user_id, user_id, user_id, user_id))
+            
+            conversations = []
+            for row in cur.fetchall():
+                friend_id = row[0]
+                friend_name = row[1]
+                
+                # Get last message
+                cur.execute("""
+                    SELECT content, created_at, sender_id
+                    FROM messages
+                    WHERE (sender_id = %s AND recipient_id = %s) 
+                       OR (sender_id = %s AND recipient_id = %s)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (user_id, friend_id, friend_id, user_id))
+                last_msg = cur.fetchone()
+                
+                # Get unread count
+                cur.execute("""
+                    SELECT COUNT(*) FROM messages
+                    WHERE sender_id = %s AND recipient_id = %s AND read = FALSE
+                """, (friend_id, user_id))
+                unread = cur.fetchone()[0]
+                
+                conversations.append({
+                    "friend_id": friend_id,
+                    "friend_name": friend_name,
+                    "last_message": last_msg[0] if last_msg else "",
+                    "last_message_time": last_msg[1].isoformat() if last_msg else "",
+                    "unread_count": unread,
+                    "is_sender": last_msg[2] == user_id if last_msg else False
+                })
+            
+            return {"user_id": user_id, "conversations": conversations}
+    finally:
+        conn.close()
+
+@app.get("/users/{user_id}/messages/{friend_id}")
+def get_messages(user_id: int, friend_id: int):
+    """Get conversation thread with a friend"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get all messages between these two users
+            cur.execute("""
+                SELECT message_id, sender_id, recipient_id, content, created_at, read,
+                       u.user_name as sender_name
+                FROM messages
+                LEFT JOIN users u ON u.user_id = sender_id
+                WHERE (sender_id = %s AND recipient_id = %s)
+                   OR (sender_id = %s AND recipient_id = %s)
+                ORDER BY created_at ASC
+            """, (user_id, friend_id, friend_id, user_id))
+            
+            messages = []
+            for row in cur.fetchall():
+                messages.append({
+                    "message_id": row[0],
+                    "sender_id": row[1],
+                    "recipient_id": row[2],
+                    "content": row[3],
+                    "created_at": row[4].isoformat(),
+                    "read": row[5],
+                    "sender_name": row[6]
+                })
+            
+            # Mark messages from friend as read
+            if messages:
+                cur.execute("""
+                    UPDATE messages
+                    SET read = TRUE
+                    WHERE sender_id = %s AND recipient_id = %s AND read = FALSE
+                """, (friend_id, user_id))
+                conn.commit()
+            
+            return {"user_id": user_id, "friend_id": friend_id, "messages": messages}
+    finally:
+        conn.close()
+
+@app.post("/users/{user_id}/messages")
+def send_message(user_id: int, request: SendMessageRequest):
+    """Send a message to a friend"""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO messages (sender_id, recipient_id, content, created_at, read)
+                VALUES (%s, %s, %s, NOW(), FALSE)
+                RETURNING message_id, created_at
+            """, (user_id, request.recipient_id, request.content))
+            result = cur.fetchone()
+            conn.commit()
+            
+            return {
+                "message_id": result[0],
+                "sender_id": user_id,
+                "recipient_id": request.recipient_id,
+                "content": request.content,
+                "created_at": result[1].isoformat(),
+                "read": False
+            }
+    except Exception as e:
+        conn.rollback()
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

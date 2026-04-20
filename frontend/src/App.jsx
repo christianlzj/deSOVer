@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useFetch } from './hooks/useFetch';
+import AuthScreen from './components/AuthScreen';
+import Greeting from './components/Greeting';
 import WeeklySummary from './components/WeeklySummary';
 import Sprout from './components/Sprout';
 import RecommendationList from './components/RecommendationList';
 import Leaderboard from './components/Leaderboard';
 import SocialBoard from './components/SocialBoard';
+import Messages from './components/Messages';
 
-const USER_ID = 1;
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 function getCurrentWeekDates() {
   const now = new Date();
@@ -28,11 +30,66 @@ function calculateEndDate(startDateStr) {
 }
 
 function App() {
+  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Restore user from localStorage on mount
+  useEffect(() => {
+    const savedUser = localStorage.getItem('desover_user');
+    if (savedUser) {
+      try {
+        setLoggedInUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error('Failed to restore user from localStorage:', e);
+      }
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Persist user to localStorage when it changes
+  useEffect(() => {
+    if (isHydrated) {
+      if (loggedInUser) {
+        localStorage.setItem('desover_user', JSON.stringify(loggedInUser));
+      } else {
+        localStorage.removeItem('desover_user');
+      }
+    }
+  }, [loggedInUser, isHydrated]);
+
+  if (!isHydrated) {
+    return <div>Loading...</div>;
+  }
+
+  // If not logged in, show auth screen
+  if (!loggedInUser) {
+    return (
+      <AuthScreen
+        onAuthSuccess={(user) => {
+          setLoggedInUser(user);
+        }}
+      />
+    );
+  }
+
+  // Once logged in, render the dashboard
+  return <Dashboard user={loggedInUser} onLogout={() => setLoggedInUser(null)} />;
+}
+
+function Dashboard({ user, onLogout }) {
   const [activeNav, setActiveNav] = useState('home');
   const [useCustomDates, setUseCustomDates] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('2025-01-01');
-  const [acceptedCarpoolId, setAcceptedCarpoolId] = useState(null);
-  const [acceptedTransitId, setAcceptedTransitId] = useState(null);
+  const [recsVersion, setRecsVersion] = useState(0);
+  const [processingId, setProcessingId] = useState(null);
+  const [friendsVersion, setFriendsVersion] = useState(0);
+  const [showAddFriend, setShowAddFriend] = useState(false);
+  const [addFriendSearch, setAddFriendSearch] = useState('');
+  const [friendActionLoading, setFriendActionLoading] = useState(null);
+  const [selectedFriendId, setSelectedFriendId] = useState(null);
+  const [selectedFriendName, setSelectedFriendName] = useState(null);
+
+  const USER_ID = user.user_id;
 
   let WEEK_START, WEEK_END;
   if (useCustomDates && customStartDate) {
@@ -48,74 +105,246 @@ function App() {
     `${API_BASE}/users/${USER_ID}/weekly-summary?week_start=${WEEK_START}&week_end=${WEEK_END}`
   );
   const { data: recommendations, loading: recsLoading, error: recsError } = useFetch(
-    `${API_BASE}/users/${USER_ID}/recommendations`
+    `${API_BASE}/users/${USER_ID}/recommendations?v=${recsVersion}`
   );
   const { data: sprout, loading: sproutLoading, error: sproutError } = useFetch(
     `${API_BASE}/users/${USER_ID}/sprout`
   );
   const { data: friends, loading: friendsLoading, error: friendsError } = useFetch(
-    `${API_BASE}/users/${USER_ID}/friends`
+    `${API_BASE}/users/${USER_ID}/friends?v=${friendsVersion}`
+  );
+  const { data: nonFriends, loading: nonFriendsLoading } = useFetch(
+    showAddFriend ? `${API_BASE}/users/${USER_ID}/non-friends?v=${friendsVersion}` : null
   );
 
+  const { data: userData, loading: userLoading, error: userError } = useFetch(
+    `${API_BASE}/users/${USER_ID}`
+  );
 
   const { data: leaderboard, loading: lbLoading, error: lbError } = useFetch(
     `${API_BASE}/users/${USER_ID}/leaderboard`
   );
 
+  // Clear processingId only after the refetch completes, not right after the PATCH
+  useEffect(() => {
+    if (!recsLoading && processingId !== null) {
+      setProcessingId(null);
+    }
+  }, [recsLoading]);
 
-  const handleAcceptCarpool = (recId) => {
-    setAcceptedCarpoolId(acceptedCarpoolId === recId ? null : recId);
+  const handleAcceptRec = async (recId) => {
+    setProcessingId(recId);
+    await fetch(`${API_BASE}/recommendations/${recId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'accepted' }),
+    });
+    setRecsVersion(v => v + 1);
   };
 
-  const handleAcceptTransit = (recId) => {
-    setAcceptedTransitId(acceptedTransitId === recId ? null : recId);
+  const handleEndRec = async (recId) => {
+    setProcessingId(recId);
+    await fetch(`${API_BASE}/recommendations/${recId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'suggested' }),
+    });
+    setRecsVersion(v => v + 1);
   };
 
-  if (summaryLoading || recsLoading || sproutLoading) {
-    return <div className="flex items-center justify-center h-screen text-earth">Loading your mobility data...</div>;
+  const handleAddFriend = async (friendId) => {
+    setFriendActionLoading(friendId);
+    try {
+      await fetch(`${API_BASE}/users/${USER_ID}/friends`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friend_id: friendId }),
+      });
+      setFriendsVersion(v => v + 1);
+    } finally {
+      setFriendActionLoading(null);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId) => {
+    setFriendActionLoading(friendId);
+    try {
+      await fetch(`${API_BASE}/users/${USER_ID}/friends/${friendId}`, {
+        method: 'DELETE',
+      });
+      setFriendsVersion(v => v + 1);
+    } finally {
+      setFriendActionLoading(null);
+    }
+  };
+
+  const handleMessage = (friendId, friendName) => {
+    setSelectedFriendId(friendId);
+    setSelectedFriendName(friendName);
+    setActiveNav('messages');
+  };
+
+  if (summaryLoading || (recsLoading && !recommendations) || sproutLoading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div style={{textAlign: 'center', maxWidth: '400px'}}>
+          <div style={{fontSize: '20px', marginBottom: '20px', color: '#2D4A3E'}}>
+            Loading your mobility data...
+          </div>
+          <div style={{fontSize: '12px', color: '#666', lineHeight: '1.8'}}>
+            <div>Summary: {summaryLoading ? '⏳ loading' : summaryError ? '❌ error' : '✓ done'}</div>
+            <div>Recommendations: {recsLoading ? '⏳ loading' : recsError ? '❌ error' : '✓ done'}</div>
+            <div>Sprout: {sproutLoading ? '⏳ loading' : sproutError ? '❌ error' : '✓ done'}</div>
+          </div>
+        </div>
+      </div>
+    );
   }
+  // Catch-all error check
   if (summaryError || recsError || sproutError) {
-    return <div className="flex items-center justify-center h-screen text-rust">Error loading data. Please try again later.</div>;
+    const allErrors = [];
+    if (summaryError) allErrors.push(`Summary: ${summaryError?.message || summaryError}`);
+    if (recsError) allErrors.push(`Recommendations: ${recsError?.message || recsError}`);
+    if (sproutError) allErrors.push(`Sprout: ${sproutError?.message || sproutError}`);
+    
+    console.error('Fetch errors:', allErrors);
   }
+  // Note: We proceed to render even with errors - errors are just logged
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+    <div style={{minHeight: '100vh', background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'}}>
       {/* Phone container */}
-      <div className="w-full max-w-sm bg-charcoal rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
+      <div style={{width: '100%', maxWidth: '320px', background: '#1A2B24', borderRadius: '32px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', overflow: 'hidden', border: '1px solid rgba(107, 114, 128, 0.3)'}}>
         {/* Phone "bezel" */}
-        <div className="bg-charcoal px-3 pt-2 pb-0">
+        <div style={{background: '#1A2B24', paddingLeft: '12px', paddingRight: '12px', paddingTop: '8px', paddingBottom: '0'}}>
           {/* Notch */}
-          <div className="flex justify-center mb-2">
-            <div className="w-32 h-6 bg-charcoal rounded-b-2xl border-t border-x border-gray-700"></div>
+          <div style={{display: 'flex', justifyContent: 'center', marginBottom: '8px'}}>
+            <div style={{width: '128px', height: '24px', background: '#1A2B24', borderRadius: '0 0 16px 16px', borderTop: '1px solid rgba(107, 114, 128, 0.4)', borderLeft: '1px solid rgba(107, 114, 128, 0.4)', borderRight: '1px solid rgba(107, 114, 128, 0.4)'}}></div>
           </div>
 
           {/* Status bar */}
-          <div className="flex justify-between items-center px-6 py-3 text-cream text-xs font-medium">
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px', paddingTop: '12px', paddingBottom: '12px', color: '#F5F0E8', fontSize: '12px', fontWeight: '500'}}>
             <span>{new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false })}</span>
             <span>●●●●●</span>
           </div>
         </div>
 
         {/* Screen content */}
-        <div className="bg-cream flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="bg-earth text-cream pt-4 pb-8 px-6 rounded-b-3xl relative overflow-hidden flex-shrink-0">
-            <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-lime opacity-10"></div>
-            <p className="text-xs font-semibold tracking-widest text-lime opacity-80 mb-2 relative z-10">
-              Week of {WEEK_START} – {WEEK_END}
-            </p>
-            <h1 className="font-serif text-2xl leading-tight mb-1 relative z-10">
-              Your Mobility<br />This Week
-            </h1>
-            <p className="text-xs text-cream opacity-60 relative z-10">
-              {WEEK_START} – {WEEK_END} · Atlanta, GA
-            </p>
+        <div style={{background: '#F5F0E8', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
+          {/* Header - Dynamic based on tab */}
+          <div style={{background: '#2D4A3E', color: '#F5F0E8', paddingTop: '16px', paddingBottom: '32px', paddingLeft: '24px', paddingRight: '24px', borderRadius: '0 0 24px 24px', position: 'relative', overflow: 'hidden', flexShrink: 0}}>
+            <div style={{position: 'absolute', top: '-40px', right: '-40px', width: '128px', height: '128px', borderRadius: '50%', background: '#B8E06A', opacity: 0.1}}></div>
+            
+            {activeNav === 'home' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Week of {WEEK_START} – {WEEK_END}
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Your Mobility<br />This Week
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {WEEK_START} – {WEEK_END} · Atlanta, GA
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'carpool' && (
+              <>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: 'rgba(184,224,106,0.18)',
+                  border: '1px solid rgba(184,224,106,0.3)',
+                  borderRadius: '20px',
+                  padding: '4px 10px',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: '#B8E06A',
+                  marginBottom: '8px',
+                  fontFamily: "'DM Sans', sans-serif",
+                  position: 'relative',
+                  zIndex: 10
+                }}>
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    background: '#B8E06A',
+                    animation: 'pulse 1.5s ease-in-out infinite'
+                  }}></span>
+                  Potential Overlaps Detected
+                </div>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Carpool<br />Matches
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {recommendations?.recommendations?.filter(r => r.type === 'carpool').length || 0} available routes
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'transit' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Smart Suggestions
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Transit<br />Options
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {recommendations?.recommendations?.filter(r => r.type === 'transit').length || 0} routes available
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'friends' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Your Community
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Friends &<br />Leaderboard
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  {friends?.friends?.length || 0} friends connected
+                </p>
+              </>
+            )}
+            
+            {activeNav === 'messages' && (
+              <>
+                <p style={{fontSize: '12px', fontWeight: '600', letterSpacing: '0.1em', color: '#B8E06A', opacity: 0.8, marginBottom: '8px', position: 'relative', zIndex: 10, textTransform: 'uppercase'}}>
+                  Stay Connected
+                </p>
+                <h1 style={{fontFamily: "'DM Serif Display', serif", fontSize: '24px', lineHeight: 1.2, marginBottom: '8px', position: 'relative', zIndex: 10}}>
+                  Messages
+                </h1>
+                <p style={{fontSize: '12px', color: '#F5F0E8', opacity: 0.6, position: 'relative', zIndex: 10}}>
+                  Chat with your friends
+                </p>
+              </>
+            )}
           </div>
+          
+          <style>{`
+            @keyframes pulse {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.5; transform: scale(0.8); }
+            }
+          `}</style>
 
           {/* Content area - scrollable */}
-          <div className="flex-1 overflow-y-auto px-5 pt-5 pb-24 space-y-4">
+          <div style={{flex: 1, overflowY: 'auto', paddingLeft: '20px', paddingRight: '20px', paddingTop: '20px', paddingBottom: '96px', display: 'flex', flexDirection: 'column', gap: '16px'}}>
             {activeNav === 'home' && (
-              <>                {/* Date picker for Home tab */}
+              <>
+                {/* Greeting message */}
+                <Greeting userName={userData?.user_name} />
+
+                {/* Date picker for Home tab */}
                 <div style={{
                   background: '#F5F0E8',
                   borderRadius: '14px',
@@ -189,16 +418,20 @@ function App() {
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="carpool"
-                acceptedId={acceptedCarpoolId}
-                onAccept={handleAcceptCarpool}
+                processingId={processingId}
+                onAccept={handleAcceptRec}
+                onEnd={handleEndRec}
+                onMessage={handleMessage}
               />
             )}
             {activeNav === 'transit' && (
               <RecommendationList
                 recommendations={recommendations?.recommendations || []}
                 type="transit"
-                acceptedId={acceptedTransitId}
-                onAccept={handleAcceptTransit}
+                processingId={processingId}
+                onAccept={handleAcceptRec}
+                onEnd={handleEndRec}
+                onMessage={handleMessage}
               />
             )}
             {activeNav === 'leaderboard' && (
@@ -215,161 +448,246 @@ function App() {
                 onBack={() => setActiveNav('leaderboard')}
               />
             )}
-            {activeNav === 'friends' && (
-              <div>
-                {/* Leaderboard button */}
-                <button
-                  onClick={() => setActiveNav('leaderboard')}
-                  style={{
-                    width: '100%',
-                    padding: '14px 18px',
-                    borderRadius: '16px',
-                    border: '1px solid rgba(184,224,106,0.3)',
-                    background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
-                    color: '#F5F0E8',
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    fontFamily: "'DM Sans', sans-serif",
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    marginBottom: '14px',
-                    boxShadow: '0 4px 14px rgba(45,74,62,0.2)',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                  }}
-                  onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
-                  onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                >
-                  <span style={{ fontSize: '18px' }}>🏆</span>
-                  <span>Leaderboard</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.6 }}>→</span>
-                </button>
-                {friendsLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
-                    Loading friends...
-                  </div>
-                ) : friendsError || !friends?.friends || friends.friends.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
-                    No friends yet. Add some to get started!
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {friends.friends.map((friend) => {
-                      const colors = ['#4A7C59', '#5B8FA8', '#C45C3A', '#E8C547', '#7DB87A'];
-                      const hashCode = (str) => {
-                        let hash = 0;
-                        for (let i = 0; i < str.length; i++) {
-                          hash = ((hash << 5) - hash) + str.charCodeAt(i);
-                          hash = hash & hash;
-                        }
-                        return Math.abs(hash);
-                      };
-                      const bgColor = colors[hashCode(friend.user_name) % colors.length];
-                      return (
-                        <div
-                          key={friend.user_id}
-                          style={{
-                            background: 'white',
-                            borderRadius: '16px',
-                            padding: '14px 16px',
+            {activeNav === 'messages' && (
+              <Messages userId={USER_ID} selectedFriendId={selectedFriendId} selectedFriendName={selectedFriendName} />
+            )}
+            {activeNav === 'friends' && (() => {
+              const colors = ['#4A7C59', '#5B8FA8', '#C45C3A', '#E8C547', '#7DB87A'];
+              const hashCode = (str) => {
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                  hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                  hash = hash & hash;
+                }
+                return Math.abs(hash);
+              };
+              const filteredNonFriends = (nonFriends?.users || []).filter(u =>
+                u.user_name.toLowerCase().includes(addFriendSearch.toLowerCase())
+              );
+              return (
+                <div>
+                  {/* Leaderboard button */}
+                  <button
+                    onClick={() => setActiveNav('leaderboard')}
+                    style={{
+                      width: '100%', padding: '14px 18px', borderRadius: '16px',
+                      border: '1px solid rgba(184,224,106,0.3)',
+                      background: 'linear-gradient(135deg, #1A2B24 0%, #2D4A3E 100%)',
+                      color: '#F5F0E8', fontSize: '14px', fontWeight: '600',
+                      fontFamily: "'DM Sans', sans-serif", cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      gap: '8px', marginBottom: '14px',
+                      boxShadow: '0 4px 14px rgba(45,74,62,0.2)',
+                      transition: 'transform 0.15s ease'
+                    }}
+                    onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                    onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                  >
+                    <span style={{ fontSize: '18px' }}>🏆</span>
+                    <span>Leaderboard</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.6 }}>→</span>
+                  </button>
+
+                  {/* Add Friend toggle button */}
+                  <button
+                    onClick={() => { setShowAddFriend(v => !v); setAddFriendSearch(''); }}
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: '12px',
+                      border: showAddFriend ? 'none' : '1.5px dashed rgba(45,74,62,0.3)',
+                      background: showAddFriend ? '#F2F6F3' : 'transparent',
+                      color: '#2D4A3E', fontSize: '13px', fontWeight: '600',
+                      fontFamily: "'DM Sans', sans-serif", cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      gap: '6px', marginBottom: '14px'
+                    }}
+                  >
+                    {showAddFriend ? '✕ Cancel' : '+ Add Friend'}
+                  </button>
+
+                  {/* Add Friend panel */}
+                  {showAddFriend && (
+                    <div style={{
+                      background: 'white', borderRadius: '16px', padding: '14px',
+                      boxShadow: '0 2px 10px rgba(45,74,62,0.08)',
+                      border: '1px solid rgba(45,74,62,0.08)', marginBottom: '16px'
+                    }}>
+                      <input
+                        type="text"
+                        value={addFriendSearch}
+                        onChange={(e) => setAddFriendSearch(e.target.value)}
+                        placeholder="Search by name..."
+                        style={{
+                          width: '100%', padding: '9px 12px', borderRadius: '8px',
+                          border: '1px solid rgba(45,74,62,0.2)', fontSize: '13px',
+                          fontFamily: "'DM Sans', sans-serif", outline: 'none',
+                          boxSizing: 'border-box', marginBottom: '10px'
+                        }}
+                      />
+                      {nonFriendsLoading ? (
+                        <div style={{ textAlign: 'center', padding: '12px', color: '#8A9A8E', fontSize: '13px' }}>
+                          Loading...
+                        </div>
+                      ) : filteredNonFriends.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '12px', color: '#8A9A8E', fontSize: '13px' }}>
+                          {addFriendSearch ? 'No users match your search.' : 'Everyone is already your friend!'}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
+                          {filteredNonFriends.map(u => {
+                            const isAdding = friendActionLoading === u.user_id;
+                            return (
+                              <div key={u.user_id} style={{
+                                display: 'flex', alignItems: 'center', gap: '10px',
+                                padding: '8px 10px', borderRadius: '10px', background: '#F8FAF8'
+                              }}>
+                                <div style={{
+                                  width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0,
+                                  background: colors[hashCode(u.user_name) % colors.length],
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: '14px', fontWeight: '700', color: 'white',
+                                  fontFamily: "'DM Serif Display', serif"
+                                }}>
+                                  {u.user_name.charAt(0).toUpperCase()}
+                                </div>
+                                <span style={{ flex: 1, fontSize: '13px', fontWeight: '500', color: '#1A2B24' }}>
+                                  {u.user_name}
+                                </span>
+                                <button
+                                  onClick={() => handleAddFriend(u.user_id)}
+                                  disabled={isAdding}
+                                  style={{
+                                    padding: '6px 12px', borderRadius: '8px', fontSize: '11px',
+                                    fontWeight: '600', border: 'none', cursor: isAdding ? 'not-allowed' : 'pointer',
+                                    fontFamily: "'DM Sans', sans-serif",
+                                    background: isAdding ? '#ccc' : '#2D4A3E',
+                                    color: isAdding ? '#888' : '#B8E06A'
+                                  }}
+                                >
+                                  {isAdding ? '...' : 'Add'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Current friends list */}
+                  {friendsLoading ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
+                      Loading friends...
+                    </div>
+                  ) : friendsError || !friends?.friends || friends.friends.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#8A9A8E', fontSize: '14px' }}>
+                      No friends yet. Add some to get started!
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {friends.friends.map((friend) => {
+                        const bgColor = colors[hashCode(friend.user_name) % colors.length];
+                        const isRemoving = friendActionLoading === friend.user_id;
+                        return (
+                          <div key={friend.user_id} style={{
+                            background: 'white', borderRadius: '16px', padding: '12px 14px',
                             boxShadow: '0 2px 10px rgba(45,74,62,0.06)',
                             border: '1px solid rgba(45,74,62,0.06)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '12px'
-                          }}
-                        >
-                          {/* Avatar with colored background */}
-                          <div
-                            style={{
-                              width: '44px',
-                              height: '44px',
-                              borderRadius: '50%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '18px',
-                              fontWeight: '700',
-                              color: 'white',
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            opacity: isRemoving ? 0.5 : 1, transition: 'opacity 0.2s'
+                          }}>
+                            <div style={{
+                              width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: '16px', fontWeight: '700', color: 'white',
                               fontFamily: "'DM Serif Display', serif",
-                              flexShrink: 0,
-                              background: bgColor,
-                              border: '2px solid white',
+                              background: bgColor, border: '2px solid white',
                               boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-                            }}
-                          >
-                            {friend.user_name?.charAt(0).toUpperCase() || '👤'}
-                          </div>
-                          {/* Friend info */}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{
-                              fontWeight: '600',
-                              fontSize: '14px',
-                              color: '#1A2B24',
-                              marginBottom: '2px'
                             }}>
-                              {friend.user_name}
-                            </p>
+                              {friend.user_name?.charAt(0).toUpperCase() || '?'}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontWeight: '600', fontSize: '14px', color: '#1A2B24', marginBottom: '1px' }}>
+                                {friend.user_name}
+                              </p>
+                              <p style={{ fontSize: '11px', color: '#8A9A8E' }}>Connected</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button
+                                onClick={() => handleMessage(friend.user_id, friend.user_name)}
+                                style={{
+                                  padding: '7px 10px', borderRadius: '8px', fontSize: '12px',
+                                  border: '1.5px solid rgba(45,74,62,0.18)', background: 'white',
+                                  color: '#2D4A3E', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif"
+                                }}
+                              >💬</button>
+                              <button
+                                onClick={() => handleRemoveFriend(friend.user_id)}
+                                disabled={isRemoving}
+                                style={{
+                                  padding: '7px 10px', borderRadius: '8px', fontSize: '11px',
+                                  fontWeight: '600', border: 'none',
+                                  background: isRemoving ? '#ccc' : '#FFE8E8',
+                                  color: isRemoving ? '#888' : '#C45C3A',
+                                  cursor: isRemoving ? 'not-allowed' : 'pointer',
+                                  fontFamily: "'DM Sans', sans-serif"
+                                }}
+                              >{isRemoving ? '...' : 'Remove'}</button>
+                            </div>
                           </div>
-                          {/* Status badge */}
-                          <div
-                            style={{
-                              background: '#E8F5E9',
-                              color: '#2D7A32',
-                              padding: '6px 12px',
-                              borderRadius: '20px',
-                              fontSize: '11px',
-                              fontWeight: '600',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            ✓ Connected
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Navigation bar */}
-          <div className="fixed bottom-0 left-0 right-0 max-w-sm mx-auto bg-white border-t border-gray-100 flex justify-around py-2 px-2 rounded-t-2xl z-50">
+          <div style={{position: 'fixed', bottom: 0, left: 0, right: 0, maxWidth: '320px', marginLeft: 'auto', marginRight: 'auto', background: 'white', borderTop: '1px solid rgba(229, 231, 235, 1)', display: 'flex', justifyContent: 'space-around', paddingTop: '8px', paddingBottom: '8px', paddingLeft: '8px', paddingRight: '8px', borderRadius: '8px 8px 0 0', zIndex: 50}}>
             <button
               onClick={() => setActiveNav('home')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'home' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'home' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🌿</span>
-              <span className="truncate">Home</span>
+              <span style={{fontSize: '18px'}}>🌿</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Home</span>
             </button>
             <button
               onClick={() => setActiveNav('carpool')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'carpool' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'carpool' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🚗</span>
-              <span className="truncate">Carpool</span>
+              <span style={{fontSize: '18px'}}>🚗</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Carpool</span>
             </button>
             <button
               onClick={() => setActiveNav('friends')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'friends' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'friends' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">👥</span>
-              <span className="truncate">Friends</span>
+              <span style={{fontSize: '18px'}}>👥</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Friends</span>
             </button>
             <button
               onClick={() => setActiveNav('transit')}
-              className={`flex-1 flex flex-col items-center gap-1 py-2 text-xs font-medium transition rounded-lg ${activeNav === 'transit' ? 'text-earth' : 'text-gray-400'
-                }`}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'transit' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
             >
-              <span className="text-lg">🚌</span>
-              <span className="truncate">Transit</span>
+              <span style={{fontSize: '18px'}}>🚌</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Transit</span>
+            </button>
+            <button
+              onClick={() => setActiveNav('messages')}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: activeNav === 'messages' ? '#2D4A3E' : '#9ca3af', transition: 'color 0.15s'}}
+            >
+              <span style={{fontSize: '18px'}}>💬</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Messages</span>
+            </button>
+            <button
+              onClick={onLogout}
+              style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '8px', paddingBottom: '8px', fontSize: '12px', fontWeight: '500', border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '8px', color: '#9ca3af', transition: 'color 0.15s'}}
+              title="Logout"
+            >
+              <span style={{fontSize: '18px'}}>🚪</span>
+              <span style={{overflow: 'hidden', textOverflow: 'ellipsis'}}>Logout</span>
             </button>
           </div>
         </div>
