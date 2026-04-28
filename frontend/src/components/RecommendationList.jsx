@@ -163,7 +163,7 @@ export default function RecommendationList({ recommendations, type, processingId
         </div>
         <div className="space-y-4">
           {recommendations.map((rec) => (
-            <RecommendationCard key={rec.id} rec={rec} onMessage={onMessage} />
+            <RecommendationCard key={rec.id} rec={rec} onMessage={onMessage} allRecommendations={recommendations} />
           ))}
         </div>
       </div>
@@ -186,11 +186,18 @@ export default function RecommendationList({ recommendations, type, processingId
 
   // ── Carpool ──────────────────────────────────────────────
   if (type === 'carpool') {
+    const carpoolRecs = recommendations.filter(r => r.type === 'carpool').sort((a, b) => a.id - b.id);
+    const transitRecs = recommendations.filter(r => r.type === 'transit').sort((a, b) => a.id - b.id);
+
     // Show a group in Suggestions as long as it has at least one non-accepted friend left.
-    // The card itself hides accepted friends (they're in Active) and blocks others if trip is active.
-    const suggestionGroups = filteredRecs.filter(rec =>
-      rec.matches?.some(m => m.status !== 'accepted')
-    );
+    // AND its transit alternative is not accepted.
+    const suggestionGroups = filteredRecs.filter(rec => {
+      const carpoolIndex = carpoolRecs.findIndex(r => r.id === rec.id);
+      const transitAlternative = carpoolIndex !== -1 && carpoolIndex < transitRecs.length ? transitRecs[carpoolIndex] : null;
+      const isTransitAccepted = transitAlternative && transitAlternative.status === 'accepted';
+      
+      return !isTransitAccepted && rec.matches?.some(m => m.status !== 'accepted');
+    });
     const activeMatches = [];
     filteredRecs.forEach(rec => {
       rec.matches?.forEach(m => {
@@ -225,6 +232,7 @@ export default function RecommendationList({ recommendations, type, processingId
                   processingId={processingId}
                   onAccept={onAccept}
                   onMessage={onMessage}
+                  allRecommendations={recommendations}
                 />
               ))}
             </div>
@@ -288,6 +296,7 @@ export default function RecommendationList({ recommendations, type, processingId
                 processingId={processingId}
                 onAccept={() => onAccept(rec.id)}
                 onMessage={onMessage}
+                allRecommendations={recommendations}
               />
             ))}
           </div>

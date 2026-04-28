@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const formatDays = (daysArray) => {
   if (!daysArray || daysArray.length === 0) return '';
@@ -12,7 +12,7 @@ const getSeededRandom = (seedStr) => {
   for (let i = 0; i < str.length; i++) {
     h = Math.imul(31, h) + str.charCodeAt(i) | 0;
   }
-  return function() {
+  return function () {
     h = Math.imul(h ^ (h >>> 16), 2246822507);
     h = Math.imul(h ^ (h >>> 13), 3266489909);
     return ((h ^= h >>> 16) >>> 0) / 4294967296;
@@ -21,21 +21,21 @@ const getSeededRandom = (seedStr) => {
 
 const FakeMap = ({ seed }) => {
   const rand = getSeededRandom(seed || 'default');
-  
+
   const roads = Array.from({ length: 4 }).map((_, i) => (
-    <line 
+    <line
       key={`v-${i}`}
-      x1={rand() * 200} y1="0" 
-      x2={rand() * 200} y2="100" 
-      stroke="white" strokeWidth="4" opacity="0.7" 
+      x1={rand() * 200} y1="0"
+      x2={rand() * 200} y2="100"
+      stroke="white" strokeWidth="4" opacity="0.7"
     />
   )).concat(
     Array.from({ length: 3 }).map((_, i) => (
-      <line 
+      <line
         key={`h-${i}`}
-        x1="0" y1={rand() * 100} 
-        x2="200" y2={rand() * 100} 
-        stroke="white" strokeWidth="4" opacity="0.7" 
+        x1="0" y1={rand() * 100}
+        x2="200" y2={rand() * 100}
+        stroke="white" strokeWidth="4" opacity="0.7"
       />
     ))
   );
@@ -102,15 +102,29 @@ const FakeMap = ({ seed }) => {
   );
 };
 
-export default function RecommendationCard({ rec, isAccepted, processingId, onAccept, onMessage, nested }) {
-  const isCarpool = rec.type === 'carpool';
+export default function RecommendationCard({ rec, isAccepted, processingId, onAccept, onMessage, nested, allRecommendations }) {
+  const [showTransit, setShowTransit] = useState(false);
 
+  const isCarpool = rec.type === 'carpool';
   // Carpool group card — shows trip info + friend list
   if (isCarpool && rec.matches && rec.matches.length > 0) {
     // Accepted friends move to Active tab — only render non-accepted friends here.
     // If the group has an accepted match, remaining friends are blocked until it's ended.
     const hasActiveMatch = rec.matches.some(m => m.status === 'accepted');
     const visibleMatches = rec.matches.filter(m => m.status !== 'accepted');
+
+    let transitAlternative = null;
+    if (allRecommendations && allRecommendations.length > 0) {
+      const carpoolRecs = allRecommendations.filter(r => r.type === 'carpool').sort((a, b) => a.id - b.id);
+      const transitRecs = allRecommendations.filter(r => r.type === 'transit').sort((a, b) => a.id - b.id);
+      
+      const carpoolIndex = carpoolRecs.findIndex(r => r.id === rec.id);
+      if (carpoolIndex !== -1 && carpoolIndex < transitRecs.length) {
+        transitAlternative = transitRecs[carpoolIndex];
+      }
+    }
+
+    const transitAccepted = transitAlternative && transitAlternative.status === 'accepted';
 
     return (
       <div style={{
@@ -215,8 +229,8 @@ export default function RecommendationCard({ rec, isAccepted, processingId, onAc
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {visibleMatches.map((match) => {
             const isProcessing = processingId === match.recommendation_id;
-            // Another friend in this trip is already active — block this one
-            const isBlocked = hasActiveMatch;
+            // Another friend in this trip is already active or transit is accepted — block this one
+            const isBlocked = hasActiveMatch || transitAccepted;
 
             return (
               <div key={match.friend_id} style={{
@@ -264,7 +278,7 @@ export default function RecommendationCard({ rec, isAccepted, processingId, onAc
                       fontFamily: "'DM Sans', sans-serif", maxWidth: '90px',
                       textAlign: 'right', lineHeight: '1.3'
                     }}>
-                      Active carpool,<br />end it first
+                      {transitAccepted ? <>Transit accepted,<br />end it first</> : <>Active carpool,<br />end it first</>}
                     </span>
                   ) : (
                     <button
@@ -297,6 +311,46 @@ export default function RecommendationCard({ rec, isAccepted, processingId, onAc
             );
           })}
         </div>
+
+        {/* Transit Alternative Button */}
+        {transitAlternative && (
+          <div style={{ marginTop: '16px' }}>
+            <button
+              onClick={() => setShowTransit(!showTransit)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '12px',
+                fontSize: '12px',
+                fontWeight: '600',
+                border: '1.5px dashed rgba(45,74,62,0.3)',
+                background: showTransit ? '#F2F6F3' : 'transparent',
+                color: '#2D4A3E',
+                cursor: 'pointer',
+                fontFamily: "'DM Sans', sans-serif",
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+            >
+              <span>🚌</span>
+              {showTransit ? 'Hide Transit Alternative' : 'View Transit Alternative'}
+            </button>
+            
+            {showTransit && (
+              <div style={{ marginTop: '12px' }}>
+                <RecommendationCard 
+                  rec={transitAlternative} 
+                  nested={true} 
+                  processingId={processingId}
+                  onAccept={() => onAccept(transitAlternative.id)}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
