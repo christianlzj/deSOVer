@@ -54,7 +54,7 @@ Built for CS 8803: Computing for Sustainability — Georgia Institute of Technol
 ```
 deSOVer/
 ├── backend/                  # FastAPI server
-│   ├── main.py               # REST API (3 endpoints)
+│   ├── main.py               # REST API (14 endpoints)
 │   └── requirements.txt      # Backend Python dependencies
 │
 ├── frontend/                 # React + Tailwind CSS app
