@@ -74,8 +74,9 @@ deSOVer/
 │   └── google/               # Sample Google Timeline JSON exports
 │
 ├── notebooks/
-│   ├── MatchingAlgorithm.ipynb      # Carpool matching algorithm development & visualization
+│   ├── CarpoolEngine.ipynb      # Carpool matching algorithm development & visualization
 │   ├── TransitEngine_revised.ipynb  # MARTA GTFS transit engine development
+│   ├── RecommendationEngine_Merged.ipynb      # Combined carpool and transit recommendation engines
 │   └── upsert_supabase.ipynb        # Pipeline to load processed data into Supabase
 │
 ├── screenshots/              # App screenshots used in this README
@@ -84,6 +85,7 @@ deSOVer/
 ├── matching_trips.py         # Four-scenario carpool compatibility scoring
 ├── score_trips.py            # Scoring pipeline entry point
 ├── friendships.py            # Friendship graph parser
+├── parse_gtimeline.py        # Parse Google timeline json files
 └── requirements.txt          # Python dependencies for pipeline scripts and notebooks
 ```
 
